@@ -372,7 +372,7 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
   }
 
   // ---------------------------------------------------------------------------
-  // History Tab
+  // History Tab - Modern Timeline Design
   // ---------------------------------------------------------------------------
 
   Widget _buildHistoryTab(ColorScheme cs) {
@@ -384,115 +384,376 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.history, size: 64, color: Colors.grey.shade400),
-            const SizedBox(height: 12),
-            Text('No update history yet',
-                style: TextStyle(color: Colors.grey.shade600, fontSize: 16)),
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.history, size: 48, color: Colors.grey.shade400),
+            ),
+            const SizedBox(height: 16),
+            Text('No Activity Yet',
+                style: TextStyle(
+                    color: Colors.grey.shade700,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Text('Updates and changes will appear here',
+                style: TextStyle(color: Colors.grey.shade500, fontSize: 14)),
           ],
         ),
       );
     }
 
     return ListView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       itemCount: _history.length,
       itemBuilder: (context, index) {
         final entry = _history[index];
-        return _historyCard(entry, cs);
+        final isFirst = index == 0;
+        final isLast = index == _history.length - 1;
+        return _buildTimelineItem(entry, cs, isFirst, isLast);
       },
     );
   }
 
-  Widget _historyCard(LeadHistory entry, ColorScheme cs) {
-    final dateStr = DateFormat('dd MMM yyyy, hh:mm a').format(entry.updatedAt);
+  Widget _buildTimelineItem(LeadHistory entry, ColorScheme cs, bool isFirst, bool isLast) {
+    final dateStr = DateFormat('dd MMM yyyy').format(entry.updatedAt);
+    final timeStr = DateFormat('hh:mm a').format(entry.updatedAt);
+    final actionType = _getActionType(entry);
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header: who & when
-            Row(
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Timeline connector
+          SizedBox(
+            width: 60,
+            child: Column(
               children: [
-                Icon(Icons.update, size: 18, color: cs.primary),
-                const SizedBox(width: 8),
+                // Top connector line
+                if (!isFirst)
+                  Container(
+                    width: 2,
+                    height: 20,
+                    color: cs.primary.withOpacity(0.3),
+                  ),
+                // Circle with icon
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [actionType.color, actionType.color.withOpacity(0.7)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: actionType.color.withOpacity(0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Icon(actionType.icon, color: Colors.white, size: 20),
+                ),
+                // Bottom connector line
                 Expanded(
-                  child: Text(
-                    entry.updatedBy.isNotEmpty
-                        ? entry.updatedBy
-                        : 'Unknown user',
-                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  child: Container(
+                    width: 2,
+                    color: isLast ? Colors.transparent : cs.primary.withOpacity(0.3),
                   ),
                 ),
-                Text(dateStr,
-                    style:
-                        TextStyle(color: Colors.grey.shade600, fontSize: 12)),
               ],
             ),
-            if (entry.comment.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Text(entry.comment,
-                  style: TextStyle(
-                      color: Colors.grey.shade700,
-                      fontStyle: FontStyle.italic)),
-            ],
-            const Divider(height: 20),
-
-            // Changed fields
-            ...entry.changedFields.entries.map((e) {
-              final fieldName = _humanFieldName(e.key);
-              final change = e.value as Map<String, dynamic>;
-              final oldVal = change['old']?.toString() ?? '';
-              final newVal = change['new']?.toString() ?? '';
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Row(
+          ),
+          // Content card
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    SizedBox(
-                      width: 120,
-                      child: Text(fieldName,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.w500, fontSize: 13)),
-                    ),
-                    Expanded(
-                      child: RichText(
-                        text: TextSpan(
-                          style: DefaultTextStyle.of(context).style,
-                          children: [
-                            if (oldVal.isNotEmpty)
-                              TextSpan(
-                                text: oldVal,
-                                style: const TextStyle(
-                                  color: Colors.red,
-                                  decoration: TextDecoration.lineThrough,
-                                  fontSize: 13,
-                                ),
-                              ),
-                            if (oldVal.isNotEmpty && newVal.isNotEmpty)
-                              const TextSpan(text: '  →  '),
-                            TextSpan(
-                              text: newVal.isNotEmpty ? newVal : '(empty)',
-                              style: const TextStyle(
-                                color: Colors.green,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 13,
+                    // Header with gradient
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [actionType.color.withOpacity(0.1), Colors.white],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: const BorderRadius.only(
+                          topLeft: Radius.circular(16),
+                          topRight: Radius.circular(16),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: actionType.color.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              actionType.label,
+                              style: TextStyle(
+                                color: actionType.color,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
                               ),
                             ),
-                          ],
+                          ),
+                          const Spacer(),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(dateStr,
+                                  style: TextStyle(
+                                      color: Colors.grey.shade600,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500)),
+                              Text(timeStr,
+                                  style: TextStyle(
+                                      color: Colors.grey.shade400, fontSize: 11)),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    // User info
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                      child: Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 14,
+                            backgroundColor: cs.primary.withOpacity(0.1),
+                            child: Text(
+                              _getInitials(entry.updatedBy),
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: cs.primary),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              entry.updatedBy.isNotEmpty
+                                  ? entry.updatedBy
+                                  : 'System',
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w600, fontSize: 13),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Comment if exists
+                    if (entry.comment.isNotEmpty) ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade50,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.grey.shade200),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(Icons.format_quote,
+                                  size: 16, color: Colors.grey.shade400),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(entry.comment,
+                                    style: TextStyle(
+                                        color: Colors.grey.shade700,
+                                        fontSize: 13,
+                                        fontStyle: FontStyle.italic)),
+                              ),
+                            ],
+                          ),
                         ),
+                      ),
+                    ],
+                    // Changed fields
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        children: entry.changedFields.entries.map((e) {
+                          return _buildChangeItem(e.key, e.value as Map<String, dynamic>);
+                        }).toList(),
                       ),
                     ),
                   ],
                 ),
-              );
-            }),
-          ],
-        ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
+  }
+
+  Widget _buildChangeItem(String field, Map<String, dynamic> change) {
+    final fieldName = _humanFieldName(field);
+    final oldVal = change['old']?.toString() ?? '';
+    final newVal = change['new']?.toString() ?? '';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            fieldName,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade600,
+              letterSpacing: 0.5,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              if (oldVal.isNotEmpty) ...[
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.red.shade100),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.remove_circle_outline,
+                            size: 14, color: Colors.red.shade400),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            oldVal,
+                            style: TextStyle(
+                              color: Colors.red.shade700,
+                              fontSize: 12,
+                              decoration: TextDecoration.lineThrough,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Icon(Icons.arrow_forward,
+                      size: 16, color: Colors.grey.shade400),
+                ),
+              ],
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.green.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.green.shade100),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.add_circle_outline,
+                          size: 14, color: Colors.green.shade600),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          newVal.isNotEmpty ? newVal : '(empty)',
+                          style: TextStyle(
+                            color: Colors.green.shade700,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  _ActionType _getActionType(LeadHistory entry) {
+    final comment = entry.comment.toLowerCase();
+    final fields = entry.changedFields.keys.toList();
+
+    // Check for meeting-related activity
+    if (comment.contains('meeting') || fields.any((f) => f.contains('meeting'))) {
+      return _ActionType('Meeting', Icons.videocam, Colors.purple);
+    }
+    // Check for stage changes
+    if (fields.contains('stage')) {
+      return _ActionType('Stage Change', Icons.trending_up, Colors.blue);
+    }
+    // Check for status changes
+    if (fields.contains('health') || fields.contains('activity_state')) {
+      return _ActionType('Status Update', Icons.flag, Colors.orange);
+    }
+    // Check for payment
+    if (fields.contains('payment_status') || fields.any((f) => f.contains('payment'))) {
+      return _ActionType('Payment', Icons.payment, Colors.green);
+    }
+    // Check for contact info changes
+    if (fields.any((f) => f.contains('email') || f.contains('mobile') || f.contains('phone'))) {
+      return _ActionType('Contact Update', Icons.contact_phone, Colors.teal);
+    }
+    // Check for notes/comments
+    if (fields.contains('notes') || fields.contains('comment')) {
+      return _ActionType('Note Added', Icons.note_add, Colors.amber.shade700);
+    }
+    // Default
+    return _ActionType('Updated', Icons.edit, Colors.indigo);
+  }
+
+  String _getInitials(String name) {
+    if (name.isEmpty) return '?';
+    final parts = name.split(RegExp(r'[@\s]+'));
+    if (parts.length >= 2) {
+      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+    }
+    return name.substring(0, name.length >= 2 ? 2 : 1).toUpperCase();
   }
 
   String _humanFieldName(String field) {
@@ -820,4 +1081,13 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
       ),
     );
   }
+}
+
+// Helper class for history action types
+class _ActionType {
+  final String label;
+  final IconData icon;
+  final Color color;
+
+  const _ActionType(this.label, this.icon, this.color);
 }

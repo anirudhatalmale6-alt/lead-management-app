@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
 import '../models/lead.dart';
+import '../models/meeting.dart';
+import '../services/calendar_service.dart';
 import '../theme/app_theme.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -14,6 +16,8 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   bool _showFilters = false;
+  String _selectedTimePeriod = 'all'; // 24h, 7d, 30d, 3m, all
+  int _currentView = 0; // 0 = Cards, 1 = Table
 
   // --- Filter state ---
   final TextEditingController _searchController = TextEditingController();
@@ -27,6 +31,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
   DateTime? _filterDateTo;
   bool _filterHasFollowUp = false;
   bool _filterHasMeeting = false;
+
+  // Meetings data
+  List<Meeting> _allMeetings = [];
+  bool _loadingMeetings = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMeetings();
+  }
+
+  Future<void> _loadMeetings() async {
+    try {
+      final meetings = await CalendarService().getAllMeetings();
+      if (mounted) {
+        setState(() {
+          _allMeetings = meetings;
+          _loadingMeetings = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _loadingMeetings = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -47,8 +75,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _filterHasFollowUp ||
       _filterHasMeeting;
 
+  // Get the date threshold based on selected time period
+  DateTime? get _timePeriodThreshold {
+    final now = DateTime.now();
+    switch (_selectedTimePeriod) {
+      case '24h':
+        return now.subtract(const Duration(hours: 24));
+      case '7d':
+        return now.subtract(const Duration(days: 7));
+      case '30d':
+        return now.subtract(const Duration(days: 30));
+      case '3m':
+        return now.subtract(const Duration(days: 90));
+      default:
+        return null;
+    }
+  }
+
   List<Lead> get _filteredLeads {
     var results = widget.leads;
+
+    // Apply time period filter
+    final threshold = _timePeriodThreshold;
+    if (threshold != null) {
+      results = results.where((l) => l.createdAt.isAfter(threshold)).toList();
+    }
 
     final query = _searchController.text.trim().toLowerCase();
     if (query.isNotEmpty) {
@@ -107,6 +158,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return results;
   }
 
+  // Get filtered meetings based on time period
+  List<Meeting> get _filteredMeetings {
+    final threshold = _timePeriodThreshold;
+    if (threshold == null) return _allMeetings;
+    return _allMeetings.where((m) => m.createdAt.isAfter(threshold)).toList();
+  }
+
   void _clearFilters() {
     setState(() {
       _searchController.clear();
@@ -153,6 +211,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
         date.day == now.day;
   }
 
+  bool _isTomorrow(DateTime date) {
+    final tomorrow = DateTime.now().add(const Duration(days: 1));
+    return date.year == tomorrow.year &&
+        date.month == tomorrow.month &&
+        date.day == tomorrow.day;
+  }
+
   // ---------------------------------------------------------------------------
   // Computed data — Summary
   // ---------------------------------------------------------------------------
@@ -172,12 +237,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _isToday(l.nextFollowUpDate!))
       .length;
 
+  int get _followUpDueTomorrow => leads
+      .where((l) =>
+          l.nextFollowUpDate != null &&
+          _isTomorrow(l.nextFollowUpDate!))
+      .length;
+
+  int get _demosToday => leads
+      .where((l) =>
+          l.meetingDate != null &&
+          _isToday(l.meetingDate!) &&
+          (l.meetingAgenda == MeetingAgenda.demo || l.stage == LeadStage.demoScheduled))
+      .length;
+
+  int get _demosTomorrow => leads
+      .where((l) =>
+          l.meetingDate != null &&
+          _isTomorrow(l.meetingDate!) &&
+          (l.meetingAgenda == MeetingAgenda.demo || l.stage == LeadStage.demoScheduled))
+      .length;
+
+  int get _upcomingPayments => leads
+      .where((l) => l.paymentStatus == PaymentStatus.pending || l.paymentStatus == PaymentStatus.partiallyPaid)
+      .length;
+
   int get _totalWon => leads.where((l) => l.stage == LeadStage.won).length;
 
   int get _totalLost => leads.where((l) => l.stage == LeadStage.lost).length;
 
   int get _totalPaid =>
       leads.where((l) => l.paymentStatus == PaymentStatus.fullyPaid).length;
+
+  int get _totalPending =>
+      leads.where((l) => l.paymentStatus == PaymentStatus.pending).length;
 
   // ---------------------------------------------------------------------------
   // Computed data — Breakdowns
@@ -227,6 +319,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final map = <int, int>{};
     for (final r in [10, 20, 30, 40, 50, 60, 70, 80, 90]) {
       map[r] = leads.where((l) => l.rating == r).length;
+    }
+    return map;
+  }
+
+  // Meeting stats by agenda
+  Map<MeetingAgenda, Map<String, int>> get _meetingStatsByAgenda {
+    final meetings = _filteredMeetings;
+    final map = <MeetingAgenda, Map<String, int>>{};
+    for (final agenda in MeetingAgenda.values) {
+      final agendaMeetings = meetings.where((m) {
+        // Check if meeting's description contains agenda or matches by lead's agenda
+        return true; // For now, count all meetings
+      }).toList();
+
+      map[agenda] = {
+        'scheduled': agendaMeetings.where((m) => m.status == MeetingStatus.scheduled).length,
+        'completed': agendaMeetings.where((m) => m.status == MeetingStatus.completed).length,
+        'cancelled': agendaMeetings.where((m) => m.status == MeetingStatus.cancelled).length,
+      };
     }
     return map;
   }
@@ -284,12 +395,42 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     return Column(
       children: [
-        // Search bar + filter toggle
+        // Time Period Selector + View Toggle
         Container(
-          color: Colors.white,
+          color: Theme.of(context).colorScheme.surface,
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
           child: Column(
             children: [
+              // Time period chips
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    _buildTimePeriodChip('24h', '24 Hours'),
+                    _buildTimePeriodChip('7d', '7 Days'),
+                    _buildTimePeriodChip('30d', '30 Days'),
+                    _buildTimePeriodChip('3m', '3 Months'),
+                    _buildTimePeriodChip('all', 'All Time'),
+                    const SizedBox(width: 16),
+                    // View Toggle
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade200,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildViewToggle(0, Icons.grid_view, 'Cards'),
+                          _buildViewToggle(1, Icons.table_chart, 'Table'),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              // Search and filters
               Row(
                 children: [
                   Expanded(
@@ -354,7 +495,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ],
                 ],
               ),
-              if (_hasActiveFilters)
+              if (_hasActiveFilters || _selectedTimePeriod != 'all')
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(
@@ -373,33 +514,547 @@ class _DashboardScreenState extends State<DashboardScreen> {
         if (_showFilters) _buildFilterPanel(),
         // Dashboard content
         Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          child: _currentView == 0 ? _buildCardsView() : _buildTableView(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTimePeriodChip(String value, String label) {
+    final isSelected = _selectedTimePeriod == value;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: FilterChip(
+        label: Text(label),
+        selected: isSelected,
+        onSelected: (selected) {
+          setState(() => _selectedTimePeriod = value);
+        },
+        selectedColor: Theme.of(context).colorScheme.primaryContainer,
+        checkmarkColor: Theme.of(context).colorScheme.primary,
+      ),
+    );
+  }
+
+  Widget _buildViewToggle(int index, IconData icon, String tooltip) {
+    final isSelected = _currentView == index;
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: () => setState(() => _currentView = index),
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: isSelected ? Theme.of(context).colorScheme.primary : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(
+            icon,
+            size: 20,
+            color: isSelected ? Colors.white : Colors.grey.shade600,
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cards View (Original Dashboard)
+  // ---------------------------------------------------------------------------
+
+  Widget _buildCardsView() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildSummaryCards(context),
+          const SizedBox(height: 16),
+          _buildTodaysSummaryCard(),
+          const SizedBox(height: 24),
+          _buildChartsRow(context),
+          const SizedBox(height: 24),
+          _buildSectionTitle('Activity State Breakdown'),
+          const SizedBox(height: 8),
+          _buildActivityStateCards(),
+          const SizedBox(height: 24),
+          _buildSectionTitle('Payment Status Breakdown'),
+          const SizedBox(height: 8),
+          _buildPaymentStatusCards(),
+          const SizedBox(height: 24),
+          _buildProductServiceCard(context),
+          const SizedBox(height: 24),
+          _buildSectionTitle('Rating Distribution'),
+          const SizedBox(height: 8),
+          _buildRatingCards(),
+          const SizedBox(height: 24),
+          _buildMeetingStatsCard(),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Today's Summary Card (New)
+  // ---------------------------------------------------------------------------
+
+  Widget _buildTodaysSummaryCard() {
+    return Card(
+      elevation: 3,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          gradient: LinearGradient(
+            colors: [Colors.indigo.shade400, Colors.indigo.shade700],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
-                _buildSummaryCards(context),
-                const SizedBox(height: 24),
-                _buildChartsRow(context),
-                const SizedBox(height: 24),
-                _buildSectionTitle('Activity State Breakdown'),
-                const SizedBox(height: 8),
-                _buildActivityStateCards(),
-                const SizedBox(height: 24),
-                _buildSectionTitle('Payment Status Breakdown'),
-                const SizedBox(height: 8),
-                _buildPaymentStatusCards(),
-                const SizedBox(height: 24),
-                _buildProductServiceCard(context),
-                const SizedBox(height: 24),
-                _buildSectionTitle('Rating Distribution'),
-                const SizedBox(height: 8),
-                _buildRatingCards(),
+                const Icon(Icons.today, color: Colors.white, size: 24),
+                const SizedBox(width: 8),
+                const Text(
+                  "Today's Summary",
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  DateFormat('dd MMM yyyy').format(DateTime.now()),
+                  style: TextStyle(color: Colors.white.withOpacity(0.8)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Wrap(
+              spacing: 20,
+              runSpacing: 16,
+              children: [
+                _buildTodayStat('New Leads', _newLeadsToday, Icons.person_add),
+                _buildTodayStat('Follow-ups Due', _followUpDueToday, Icons.notification_important),
+                _buildTodayStat('Demos Today', _demosToday, Icons.videocam),
+                _buildTodayStat('Follow-ups Tomorrow', _followUpDueTomorrow, Icons.schedule),
+                _buildTodayStat('Demos Tomorrow', _demosTomorrow, Icons.event),
+                _buildTodayStat('Pending Payments', _upcomingPayments, Icons.payment),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTodayStat(String label, int value, IconData icon) {
+    return Container(
+      constraints: const BoxConstraints(minWidth: 140),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: Colors.white, size: 24),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '$value',
+                style: const TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.white.withOpacity(0.8),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Meeting Stats Card (New)
+  // ---------------------------------------------------------------------------
+
+  Widget _buildMeetingStatsCard() {
+    final totalMeetings = _filteredMeetings.length;
+    final scheduled = _filteredMeetings.where((m) => m.status == MeetingStatus.scheduled).length;
+    final completed = _filteredMeetings.where((m) => m.status == MeetingStatus.completed).length;
+    final cancelled = _filteredMeetings.where((m) => m.status == MeetingStatus.cancelled).length;
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.event, color: Colors.indigo),
+                const SizedBox(width: 8),
+                const Text(
+                  'Meeting Statistics',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const Spacer(),
+                if (_loadingMeetings)
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 16,
+              runSpacing: 12,
+              children: [
+                _buildMeetingStat('Total', totalMeetings, Colors.indigo),
+                _buildMeetingStat('Scheduled', scheduled, Colors.blue),
+                _buildMeetingStat('Completed', completed, Colors.green),
+                _buildMeetingStat('Cancelled', cancelled, Colors.red),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMeetingStat(String label, int count, Color color) {
+    return Container(
+      constraints: const BoxConstraints(minWidth: 100),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          Text(
+            '$count',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+          Text(
+            label,
+            style: TextStyle(fontSize: 12, color: color.withOpacity(0.8)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Table View (New)
+  // ---------------------------------------------------------------------------
+
+  Widget _buildTableView() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Total System Stats Table
+          _buildStatsTable(
+            'Total System Stats',
+            Icons.analytics,
+            [
+              ['Total Leads', '$_totalLeads'],
+              ['Total Won', '$_totalWon'],
+              ['Total Lost', '$_totalLost'],
+              ['Total Paid', '$_totalPaid'],
+              ['Total Pending', '$_totalPending'],
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // Today's Stats Table
+          _buildStatsTable(
+            "Today's Stats",
+            Icons.today,
+            [
+              ['New Leads Today', '$_newLeadsToday'],
+              ['Follow-up Due Today', '$_followUpDueToday'],
+              ['Follow-up Due Tomorrow', '$_followUpDueTomorrow'],
+              ['Demos Today', '$_demosToday'],
+              ['Demos Tomorrow', '$_demosTomorrow'],
+              ['Upcoming Payments', '$_upcomingPayments'],
+            ],
+            headerColor: Colors.indigo,
+          ),
+          const SizedBox(height: 16),
+
+          // Health-wise Table
+          _buildStatsTable(
+            'Total Leads - Health Wise',
+            Icons.favorite,
+            _healthCounts.entries.map((e) => [e.key.label, '${e.value}']).toList(),
+            headerColor: Colors.red.shade400,
+          ),
+          const SizedBox(height: 16),
+
+          // Rating-wise Table
+          _buildStatsTable(
+            'Total Leads - Rating Wise',
+            Icons.star,
+            [
+              ['N/A', '${leads.where((l) => l.rating == 0).length}'],
+              ..._ratingCounts.entries.map((e) => ['Rating ${e.key}', '${e.value}']).toList(),
+            ],
+            headerColor: Colors.amber.shade700,
+          ),
+          const SizedBox(height: 16),
+
+          // Stage-wise Table
+          _buildStatsTable(
+            'Total Leads - Sales Stage Wise',
+            Icons.trending_up,
+            _stageCounts.entries.map((e) => [e.key.label, '${e.value}']).toList(),
+            headerColor: Colors.blue,
+          ),
+          const SizedBox(height: 16),
+
+          // Activity State Table
+          _buildStatsTable(
+            'Total Leads - Activity State',
+            Icons.access_time,
+            _activityCounts.entries.map((e) => [e.key.label, '${e.value}']).toList(),
+            headerColor: Colors.teal,
+          ),
+          const SizedBox(height: 16),
+
+          // Payment Status Table
+          _buildStatsTable(
+            'Total Payment Status',
+            Icons.payment,
+            _paymentCounts.entries.map((e) => [e.key.label, '${e.value}']).toList(),
+            headerColor: Colors.green,
+          ),
+          const SizedBox(height: 16),
+
+          // Product/Service Table
+          _buildStatsTable(
+            'Total - Interested In Product/Service Wise',
+            Icons.category,
+            _productCounts.entries.map((e) => [e.key.label, '${e.value}']).toList(),
+            headerColor: Colors.purple,
+          ),
+          const SizedBox(height: 16),
+
+          // Meeting Stats Table
+          _buildMeetingStatsTable(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatsTable(String title, IconData icon, List<List<String>> rows, {Color headerColor = Colors.indigo}) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          // Header
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [headerColor, headerColor.withOpacity(0.7)],
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(icon, color: Colors.white, size: 20),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
-        ),
-      ],
+          // Table rows
+          ...rows.asMap().entries.map((entry) {
+            final idx = entry.key;
+            final row = entry.value;
+            return Container(
+              color: idx.isOdd ? Colors.grey.shade50 : Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: Text(
+                      row[0],
+                      style: const TextStyle(fontSize: 14),
+                    ),
+                  ),
+                  Container(
+                    constraints: const BoxConstraints(minWidth: 60),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: headerColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      row[1],
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: headerColor,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMeetingStatsTable() {
+    final totalMeetings = _filteredMeetings.length;
+    final scheduled = _filteredMeetings.where((m) => m.status == MeetingStatus.scheduled).length;
+    final completed = _filteredMeetings.where((m) => m.status == MeetingStatus.completed).length;
+    final cancelled = _filteredMeetings.where((m) => m.status == MeetingStatus.cancelled).length;
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          // Header
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Colors.deepPurple, Colors.deepPurple.withOpacity(0.7)],
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+              ),
+            ),
+            child: Row(
+              children: const [
+                Icon(Icons.event, color: Colors.white, size: 20),
+                SizedBox(width: 10),
+                Text(
+                  'Meeting Statistics',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Table header row
+          Container(
+            color: Colors.grey.shade100,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Row(
+              children: const [
+                Expanded(flex: 2, child: Text('Status', style: TextStyle(fontWeight: FontWeight.bold))),
+                Expanded(child: Text('Count', textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.bold))),
+              ],
+            ),
+          ),
+          // Rows
+          _buildMeetingTableRow('Total Scheduled', totalMeetings, Colors.indigo, false),
+          _buildMeetingTableRow('Scheduled', scheduled, Colors.blue, true),
+          _buildMeetingTableRow('Completed', completed, Colors.green, false),
+          _buildMeetingTableRow('Cancelled', cancelled, Colors.red, true),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMeetingTableRow(String label, int count, Color color, bool isOdd) {
+    return Container(
+      color: isOdd ? Colors.grey.shade50 : Colors.white,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Row(
+        children: [
+          Expanded(
+            flex: 2,
+            child: Row(
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: color,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(label, style: const TextStyle(fontSize: 14)),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                '$count',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -657,18 +1312,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         label: 'Total Leads',
       ),
       _SummaryCardData(
-        icon: Icons.fiber_new,
-        color: Colors.blue,
-        value: '$_newLeadsToday',
-        label: 'New Leads Today',
-      ),
-      _SummaryCardData(
-        icon: Icons.notification_important,
-        color: Colors.orange,
-        value: '$_followUpDueToday',
-        label: 'Follow-up Due Today',
-      ),
-      _SummaryCardData(
         icon: Icons.emoji_events,
         color: Colors.green,
         value: '$_totalWon',
@@ -685,6 +1328,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
         color: Colors.teal,
         value: '$_totalPaid',
         label: 'Total Paid',
+      ),
+      _SummaryCardData(
+        icon: Icons.pending,
+        color: Colors.orange,
+        value: '$_totalPending',
+        label: 'Total Pending',
       ),
     ];
 
