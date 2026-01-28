@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/email_template.dart';
+import '../models/user.dart';
+import '../models/lead.dart';
 import '../services/email_service.dart';
+import '../services/auth_service.dart';
 import '../utils/seed_demo_data.dart';
 
 class EmailSettingsScreen extends StatefulWidget {
@@ -12,34 +16,59 @@ class EmailSettingsScreen extends StatefulWidget {
 
 class _EmailSettingsScreenState extends State<EmailSettingsScreen>
     with SingleTickerProviderStateMixin {
-  late TabController _tabController;
+  TabController? _tabController;
   final EmailService _emailService = EmailService();
+  final AuthService _authService = AuthService();
+  bool _isSuperAdmin = false;
+  bool _loading = true;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _checkUserRole();
+  }
+
+  Future<void> _checkUserRole() async {
+    final user = await _authService.getCurrentAppUser();
+    final isSuperAdmin = user?.role == UserRole.superAdmin;
+    setState(() {
+      _isSuperAdmin = isSuperAdmin;
+      _tabController = TabController(
+        length: isSuperAdmin ? 5 : 4,
+        vsync: this,
+      );
+      _loading = false;
+    });
   }
 
   @override
   void dispose() {
-    _tabController.dispose();
+    _tabController?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_loading) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Email Settings')),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Email Settings'),
         bottom: TabBar(
           controller: _tabController,
           isScrollable: true,
-          tabs: const [
-            Tab(text: 'SMTP', icon: Icon(Icons.settings)),
-            Tab(text: 'Categories', icon: Icon(Icons.category)),
-            Tab(text: 'Templates', icon: Icon(Icons.email)),
-            Tab(text: 'Demo Data', icon: Icon(Icons.science)),
+          tabs: [
+            const Tab(text: 'SMTP', icon: Icon(Icons.settings)),
+            const Tab(text: 'Categories', icon: Icon(Icons.category)),
+            const Tab(text: 'Templates', icon: Icon(Icons.email)),
+            const Tab(text: 'Demo Data', icon: Icon(Icons.science)),
+            if (_isSuperAdmin)
+              const Tab(text: 'Lead Manager', icon: Icon(Icons.admin_panel_settings)),
           ],
         ),
       ),
@@ -50,6 +79,7 @@ class _EmailSettingsScreenState extends State<EmailSettingsScreen>
           _CategoriesTab(emailService: _emailService),
           _TemplatesTab(emailService: _emailService),
           const _DemoDataTab(),
+          if (_isSuperAdmin) const _LeadManagerTab(),
         ],
       ),
     );
@@ -1116,5 +1146,568 @@ class _DemoDataTabState extends State<_DemoDataTab> {
         ],
       ),
     );
+  }
+}
+
+// ============================================================================
+// Lead Manager Tab - Super Admin Only
+// ============================================================================
+
+class _LeadManagerTab extends StatefulWidget {
+  const _LeadManagerTab();
+
+  @override
+  State<_LeadManagerTab> createState() => _LeadManagerTabState();
+}
+
+class _LeadManagerTabState extends State<_LeadManagerTab> {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  // Filter state
+  LeadStage? _filterStage;
+  LeadHealth? _filterHealth;
+  ProductService? _filterProduct;
+  DateTime? _filterFromDate;
+  DateTime? _filterToDate;
+  String _searchQuery = '';
+
+  // Selection state
+  final Set<String> _selectedLeadIds = {};
+  bool _selectAll = false;
+  bool _isDeleting = false;
+
+  // Leads data
+  List<Lead> _leads = [];
+  List<Lead> _filteredLeads = [];
+  bool _loading = true;
+
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLeads();
+  }
+
+  Future<void> _loadLeads() async {
+    setState(() => _loading = true);
+    try {
+      final snapshot = await _firestore.collection('leads').get();
+      _leads = snapshot.docs.map((doc) => Lead.fromFirestore(doc)).toList();
+      _applyFilters();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading leads: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _applyFilters() {
+    _filteredLeads = _leads.where((lead) {
+      // Stage filter
+      if (_filterStage != null && lead.stage != _filterStage) return false;
+
+      // Health filter
+      if (_filterHealth != null && lead.health != _filterHealth) return false;
+
+      // Product filter
+      if (_filterProduct != null && lead.interestedInProduct != _filterProduct) return false;
+
+      // Date range filter
+      if (_filterFromDate != null && lead.createdAt.isBefore(_filterFromDate!)) return false;
+      if (_filterToDate != null && lead.createdAt.isAfter(_filterToDate!.add(const Duration(days: 1)))) return false;
+
+      // Search filter
+      if (_searchQuery.isNotEmpty) {
+        final query = _searchQuery.toLowerCase();
+        final matchesName = lead.clientName.toLowerCase().contains(query);
+        final matchesEmail = lead.clientEmail.toLowerCase().contains(query);
+        final matchesPhone = lead.clientMobile.contains(query);
+        final matchesBusiness = lead.clientBusinessName.toLowerCase().contains(query);
+        if (!matchesName && !matchesEmail && !matchesPhone && !matchesBusiness) return false;
+      }
+
+      return true;
+    }).toList();
+
+    // Sort by created date descending
+    _filteredLeads.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+    // Update selectAll state
+    _selectAll = _filteredLeads.isNotEmpty &&
+        _filteredLeads.every((l) => _selectedLeadIds.contains(l.id));
+
+    setState(() {});
+  }
+
+  void _toggleSelectAll(bool? value) {
+    setState(() {
+      _selectAll = value ?? false;
+      if (_selectAll) {
+        _selectedLeadIds.addAll(_filteredLeads.map((l) => l.id));
+      } else {
+        _selectedLeadIds.removeAll(_filteredLeads.map((l) => l.id));
+      }
+    });
+  }
+
+  void _toggleLeadSelection(String leadId, bool? selected) {
+    setState(() {
+      if (selected == true) {
+        _selectedLeadIds.add(leadId);
+      } else {
+        _selectedLeadIds.remove(leadId);
+      }
+      _selectAll = _filteredLeads.isNotEmpty &&
+          _filteredLeads.every((l) => _selectedLeadIds.contains(l.id));
+    });
+  }
+
+  Future<void> _deleteSelectedLeads() async {
+    if (_selectedLeadIds.isEmpty) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Leads?'),
+        content: Text(
+          'Are you sure you want to permanently delete ${_selectedLeadIds.length} lead(s)?\n\n'
+          'This action cannot be undone. All history and data for these leads will be lost.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() => _isDeleting = true);
+
+    try {
+      int deleted = 0;
+      for (final leadId in _selectedLeadIds.toList()) {
+        // Delete history subcollection first
+        final historySnapshot = await _firestore
+            .collection('leads')
+            .doc(leadId)
+            .collection('history')
+            .get();
+
+        for (final historyDoc in historySnapshot.docs) {
+          await historyDoc.reference.delete();
+        }
+
+        // Delete email_logs subcollection
+        final emailLogsSnapshot = await _firestore
+            .collection('leads')
+            .doc(leadId)
+            .collection('email_logs')
+            .get();
+
+        for (final emailDoc in emailLogsSnapshot.docs) {
+          await emailDoc.reference.delete();
+        }
+
+        // Delete the lead document
+        await _firestore.collection('leads').doc(leadId).delete();
+        deleted++;
+
+        if (deleted % 10 == 0 && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Deleted $deleted of ${_selectedLeadIds.length} leads...'),
+              duration: const Duration(seconds: 1),
+            ),
+          );
+        }
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Successfully deleted ${_selectedLeadIds.length} lead(s)'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        _selectedLeadIds.clear();
+        await _loadLeads();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error deleting leads: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isDeleting = false);
+    }
+  }
+
+  void _clearFilters() {
+    setState(() {
+      _filterStage = null;
+      _filterHealth = null;
+      _filterProduct = null;
+      _filterFromDate = null;
+      _filterToDate = null;
+      _searchQuery = '';
+    });
+    _applyFilters();
+  }
+
+  Future<void> _pickDateRange() async {
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      initialDateRange: _filterFromDate != null && _filterToDate != null
+          ? DateTimeRange(start: _filterFromDate!, end: _filterToDate!)
+          : null,
+    );
+
+    if (picked != null) {
+      setState(() {
+        _filterFromDate = picked.start;
+        _filterToDate = picked.end;
+      });
+      _applyFilters();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        // Header with warning
+        Container(
+          color: Colors.red.shade50,
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Icon(Icons.admin_panel_settings, color: Colors.red.shade700),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Super Admin Only: Filter and delete leads from the database',
+                  style: TextStyle(color: Colors.red.shade700, fontWeight: FontWeight.w500),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Filters section
+        Card(
+          margin: const EdgeInsets.all(12),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Filters', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                const SizedBox(height: 12),
+
+                // Search field
+                TextField(
+                  decoration: InputDecoration(
+                    hintText: 'Search by name, email, phone, business...',
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear),
+                            onPressed: () {
+                              setState(() => _searchQuery = '');
+                              _applyFilters();
+                            },
+                          )
+                        : null,
+                    border: const OutlineInputBorder(),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  ),
+                  onChanged: (value) {
+                    _searchQuery = value;
+                    _applyFilters();
+                  },
+                ),
+                const SizedBox(height: 12),
+
+                // Filter dropdowns row
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    // Stage filter
+                    SizedBox(
+                      width: 150,
+                      child: DropdownButtonFormField<LeadStage?>(
+                        value: _filterStage,
+                        decoration: const InputDecoration(
+                          labelText: 'Stage',
+                          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          border: OutlineInputBorder(),
+                        ),
+                        items: [
+                          const DropdownMenuItem(value: null, child: Text('All Stages')),
+                          ...LeadStage.values.map((s) => DropdownMenuItem(
+                            value: s,
+                            child: Text(s.label, style: const TextStyle(fontSize: 12)),
+                          )),
+                        ],
+                        onChanged: (v) {
+                          _filterStage = v;
+                          _applyFilters();
+                        },
+                      ),
+                    ),
+
+                    // Health filter
+                    SizedBox(
+                      width: 150,
+                      child: DropdownButtonFormField<LeadHealth?>(
+                        value: _filterHealth,
+                        decoration: const InputDecoration(
+                          labelText: 'Health',
+                          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          border: OutlineInputBorder(),
+                        ),
+                        items: [
+                          const DropdownMenuItem(value: null, child: Text('All Health')),
+                          ...LeadHealth.values.map((h) => DropdownMenuItem(
+                            value: h,
+                            child: Text(h.label, style: const TextStyle(fontSize: 12)),
+                          )),
+                        ],
+                        onChanged: (v) {
+                          _filterHealth = v;
+                          _applyFilters();
+                        },
+                      ),
+                    ),
+
+                    // Product filter
+                    SizedBox(
+                      width: 200,
+                      child: DropdownButtonFormField<ProductService?>(
+                        value: _filterProduct,
+                        decoration: const InputDecoration(
+                          labelText: 'Product/Service',
+                          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          border: OutlineInputBorder(),
+                        ),
+                        isExpanded: true,
+                        items: [
+                          const DropdownMenuItem(value: null, child: Text('All Products')),
+                          ...ProductService.values.map((p) => DropdownMenuItem(
+                            value: p,
+                            child: Text(p.label, style: const TextStyle(fontSize: 11), overflow: TextOverflow.ellipsis),
+                          )),
+                        ],
+                        onChanged: (v) {
+                          _filterProduct = v;
+                          _applyFilters();
+                        },
+                      ),
+                    ),
+
+                    // Date range button
+                    OutlinedButton.icon(
+                      onPressed: _pickDateRange,
+                      icon: const Icon(Icons.date_range, size: 18),
+                      label: Text(
+                        _filterFromDate != null && _filterToDate != null
+                            ? '${_filterFromDate!.day}/${_filterFromDate!.month} - ${_filterToDate!.day}/${_filterToDate!.month}'
+                            : 'Date Range',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+
+                    // Clear filters button
+                    TextButton.icon(
+                      onPressed: _clearFilters,
+                      icon: const Icon(Icons.clear_all, size: 18),
+                      label: const Text('Clear'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        // Action bar
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          color: Colors.grey.shade100,
+          child: Row(
+            children: [
+              Checkbox(
+                value: _selectAll,
+                onChanged: _toggleSelectAll,
+              ),
+              Text(
+                '${_selectedLeadIds.length} selected of ${_filteredLeads.length}',
+                style: const TextStyle(fontWeight: FontWeight.w500),
+              ),
+              const Spacer(),
+              if (_selectedLeadIds.isNotEmpty)
+                FilledButton.icon(
+                  onPressed: _isDeleting ? null : _deleteSelectedLeads,
+                  style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                  icon: _isDeleting
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Icon(Icons.delete),
+                  label: Text(_isDeleting ? 'Deleting...' : 'Delete Selected'),
+                ),
+              const SizedBox(width: 8),
+              IconButton(
+                onPressed: _loadLeads,
+                icon: const Icon(Icons.refresh),
+                tooltip: 'Refresh',
+              ),
+            ],
+          ),
+        ),
+
+        // Leads list
+        Expanded(
+          child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : _filteredLeads.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.inbox, size: 64, color: Colors.grey.shade400),
+                          const SizedBox(height: 16),
+                          Text(
+                            _leads.isEmpty ? 'No leads in database' : 'No leads match the filters',
+                            style: TextStyle(color: Colors.grey.shade600, fontSize: 16),
+                          ),
+                        ],
+                      ),
+                    )
+                  : ListView.builder(
+                      itemCount: _filteredLeads.length,
+                      itemBuilder: (context, index) {
+                        final lead = _filteredLeads[index];
+                        final isSelected = _selectedLeadIds.contains(lead.id);
+
+                        return Card(
+                          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                          color: isSelected ? Colors.red.shade50 : null,
+                          child: CheckboxListTile(
+                            value: isSelected,
+                            onChanged: (v) => _toggleLeadSelection(lead.id, v),
+                            secondary: CircleAvatar(
+                              backgroundColor: _getStageColor(lead.stage),
+                              child: Text(
+                                lead.clientName.isNotEmpty ? lead.clientName[0].toUpperCase() : '?',
+                                style: const TextStyle(color: Colors.white),
+                              ),
+                            ),
+                            title: Text(
+                              lead.clientName,
+                              style: const TextStyle(fontWeight: FontWeight.w500),
+                            ),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '${lead.clientEmail} • ${lead.clientMobile}',
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                                const SizedBox(height: 4),
+                                Wrap(
+                                  spacing: 4,
+                                  children: [
+                                    _buildChip(lead.stage.label, _getStageColor(lead.stage)),
+                                    _buildChip(lead.health.label, _getHealthColor(lead.health)),
+                                    _buildChip(
+                                      lead.interestedInProduct.label.length > 15
+                                          ? '${lead.interestedInProduct.label.substring(0, 15)}...'
+                                          : lead.interestedInProduct.label,
+                                      Colors.grey,
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                            isThreeLine: true,
+                          ),
+                        );
+                      },
+                    ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildChip(String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withOpacity(0.5)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.w500),
+      ),
+    );
+  }
+
+  Color _getStageColor(LeadStage stage) {
+    switch (stage) {
+      case LeadStage.newLead:
+        return Colors.blue;
+      case LeadStage.contacted:
+        return Colors.cyan;
+      case LeadStage.demoScheduled:
+        return Colors.orange;
+      case LeadStage.demoCompleted:
+        return Colors.purple;
+      case LeadStage.proposalSent:
+        return Colors.indigo;
+      case LeadStage.negotiation:
+        return Colors.amber;
+      case LeadStage.won:
+        return Colors.green;
+      case LeadStage.lost:
+        return Colors.red;
+    }
+  }
+
+  Color _getHealthColor(LeadHealth health) {
+    switch (health) {
+      case LeadHealth.hot:
+        return Colors.red;
+      case LeadHealth.warm:
+        return Colors.orange;
+      case LeadHealth.solo:
+        return Colors.blue;
+      case LeadHealth.sleeping:
+        return Colors.grey;
+      case LeadHealth.dead:
+        return Colors.black54;
+      case LeadHealth.junk:
+        return Colors.brown;
+    }
   }
 }
