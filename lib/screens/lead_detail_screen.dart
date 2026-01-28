@@ -3,17 +3,23 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/lead.dart';
 import '../models/lead_history.dart';
+import '../models/email_template.dart';
+import '../models/user.dart';
 import '../services/lead_service.dart';
+import '../services/email_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/send_email_dialog.dart';
 
 class LeadDetailScreen extends StatefulWidget {
   final Lead lead;
   final VoidCallback? onEditPressed;
+  final AppUser? currentUser;
 
   const LeadDetailScreen({
     super.key,
     required this.lead,
     this.onEditPressed,
+    this.currentUser,
   });
 
   @override
@@ -24,14 +30,18 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final LeadService _leadService = LeadService();
+  final EmailService _emailService = EmailService();
   List<LeadHistory> _history = [];
+  List<EmailLog> _emailLogs = [];
   bool _loadingHistory = true;
+  bool _loadingEmails = true;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     _loadHistory();
+    _loadEmailLogs();
   }
 
   @override
@@ -56,6 +66,42 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
     }
   }
 
+  Future<void> _loadEmailLogs() async {
+    try {
+      final logs = await _emailService.getEmailLogsForLead(widget.lead.id);
+      if (mounted) {
+        setState(() {
+          _emailLogs = logs;
+          _loadingEmails = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _loadingEmails = false);
+      }
+    }
+  }
+
+  void _openSendEmailDialog() {
+    if (widget.currentUser == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('User not logged in')),
+      );
+      return;
+    }
+    showDialog(
+      context: context,
+      builder: (ctx) => SendEmailDialog(
+        lead: widget.lead,
+        currentUser: widget.currentUser!,
+      ),
+    ).then((sent) {
+      if (sent == true) {
+        _loadEmailLogs();
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final lead = widget.lead;
@@ -65,6 +111,11 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
       appBar: AppBar(
         title: Text(lead.clientName),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.email),
+            tooltip: 'Send Email',
+            onPressed: _openSendEmailDialog,
+          ),
           if (widget.onEditPressed != null)
             IconButton(
               icon: const Icon(Icons.edit),
@@ -76,6 +127,7 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
           tabs: const [
             Tab(text: 'Details'),
             Tab(text: 'History'),
+            Tab(text: 'Emails'),
           ],
         ),
       ),
@@ -84,6 +136,7 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
         children: [
           _buildDetailsTab(lead, cs),
           _buildHistoryTab(cs),
+          _buildEmailsTab(cs),
         ],
       ),
     );
@@ -400,5 +453,145 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
         .map((w) =>
             w.isNotEmpty ? '${w[0].toUpperCase()}${w.substring(1)}' : '')
         .join(' ');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Emails Tab
+  // ---------------------------------------------------------------------------
+
+  Widget _buildEmailsTab(ColorScheme cs) {
+    return Column(
+      children: [
+        // Send email button
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _openSendEmailDialog,
+              icon: const Icon(Icons.send),
+              label: const Text('Send Email to Lead'),
+            ),
+          ),
+        ),
+        const Divider(),
+        // Email logs
+        Expanded(
+          child: _loadingEmails
+              ? const Center(child: CircularProgressIndicator())
+              : _emailLogs.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.mail_outline,
+                              size: 64, color: Colors.grey.shade400),
+                          const SizedBox(height: 12),
+                          Text('No emails sent yet',
+                              style: TextStyle(
+                                  color: Colors.grey.shade600, fontSize: 16)),
+                        ],
+                      ),
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: _emailLogs.length,
+                      itemBuilder: (context, index) {
+                        final log = _emailLogs[index];
+                        return _emailLogCard(log, cs);
+                      },
+                    ),
+        ),
+      ],
+    );
+  }
+
+  Widget _emailLogCard(EmailLog log, ColorScheme cs) {
+    final dateStr = DateFormat('dd MMM yyyy, hh:mm a').format(log.sentAt);
+    final statusColor = log.status == 'sent'
+        ? Colors.green
+        : log.status == 'failed'
+            ? Colors.red
+            : Colors.orange;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.email, size: 18, color: cs.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    log.templateName,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: statusColor.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    log.status.toUpperCase(),
+                    style: TextStyle(
+                      color: statusColor,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              log.subject,
+              style: const TextStyle(fontSize: 13),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Icon(Icons.person_outline,
+                    size: 14, color: Colors.grey.shade600),
+                const SizedBox(width: 4),
+                Text(
+                  log.sentByUserName,
+                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                ),
+                const Spacer(),
+                Icon(Icons.access_time, size: 14, color: Colors.grey.shade600),
+                const SizedBox(width: 4),
+                Text(
+                  dateStr,
+                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                ),
+              ],
+            ),
+            if (log.errorMessage != null && log.errorMessage!.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  log.errorMessage!,
+                  style: TextStyle(color: Colors.red.shade700, fontSize: 12),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 }

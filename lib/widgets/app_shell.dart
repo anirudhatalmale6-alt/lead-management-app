@@ -47,6 +47,11 @@ class _AppShellState extends State<AppShell> {
           selectedIcon: Icon(Icons.groups),
           label: 'Teams',
         ),
+        const NavigationDestination(
+          icon: Icon(Icons.email_outlined),
+          selectedIcon: Icon(Icons.email),
+          label: 'Email',
+        ),
       ]);
     }
     return items;
@@ -76,6 +81,11 @@ class _AppShellState extends State<AppShell> {
           icon: Icon(Icons.groups_outlined),
           selectedIcon: Icon(Icons.groups),
           label: Text('Teams'),
+        ),
+        const NavigationRailDestination(
+          icon: Icon(Icons.email_outlined),
+          selectedIcon: Icon(Icons.email),
+          label: Text('Email'),
         ),
       ]);
     }

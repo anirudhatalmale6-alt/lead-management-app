@@ -10,6 +10,7 @@ import 'screens/lead_form_screen.dart';
 import 'screens/lead_detail_screen.dart';
 import 'screens/user_management_screen.dart';
 import 'screens/team_management_screen.dart';
+import 'screens/email_settings_screen.dart';
 import 'widgets/app_shell.dart';
 import 'services/firebase_options.dart';
 import 'services/auth_service.dart';
@@ -150,6 +151,7 @@ class _AppRootState extends State<AppRoot> {
       MaterialPageRoute(
         builder: (_) => LeadDetailScreen(
           lead: lead,
+          currentUser: _currentUser,
           onEditPressed: canEdit
               ? () {
                   Navigator.of(context).pop();
@@ -269,6 +271,7 @@ class _AppRootState extends State<AppRoot> {
       screens.addAll([
         const UserManagementScreen(),
         const TeamManagementScreen(),
+        const EmailSettingsScreen(),
       ]);
     }
 
