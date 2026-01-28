@@ -1,0 +1,96 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper: get user doc
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    // Helper: check role
+    function hasRole(role) {
+      return getUserData().role == role;
+    }
+
+    function isAdmin() {
+      return hasRole('super_admin') || hasRole('admin');
+    }
+
+    function isManager() {
+      return hasRole('manager');
+    }
+
+    function isTeamLead() {
+      return hasRole('team_lead');
+    }
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin();
+      allow update: if isAdmin() || request.auth.uid == userId;
+      allow delete: if isAdmin();
+    }
+
+    // Teams collection
+    match /teams/{teamId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Groups collection
+    match /groups/{groupId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin() || isManager();
+    }
+
+    // Leads collection
+    match /leads/{leadId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+
+    // Email templates
+    match /templates_email/{templateId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // WhatsApp templates
+    match /templates_whatsapp/{templateId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Email logs
+    match /logs_email/{logId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+    }
+
+    // Meet logs
+    match /logs_meet/{logId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+    }
+
+    // Calendar events
+    match /calendar_events/{eventId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated();
+      allow delete: if isAdmin() || isManager();
+    }
+
+    // Activity logs / audit trail
+    match /activity_logs/{logId} {
+      allow read: if isAdmin() || isManager();
+      allow create: if isAuthenticated();
+    }
+  }
+}

@@ -1,0 +1,143 @@
+{
+  "collections": {
+    "users": {
+      "description": "All app users with roles and team assignments",
+      "fields": {
+        "uid": "string - Firebase Auth UID",
+        "email": "string",
+        "display_name": "string",
+        "phone": "string",
+        "role": "string - one of: super_admin, admin, manager, team_lead, coordinator, member",
+        "team_id": "string - reference to teams collection",
+        "group_id": "string - reference to groups collection",
+        "is_active": "boolean",
+        "created_at": "timestamp",
+        "updated_at": "timestamp",
+        "created_by": "string - uid of creator"
+      }
+    },
+    "teams": {
+      "description": "Top-level organizational unit",
+      "fields": {
+        "name": "string",
+        "description": "string",
+        "manager_uid": "string - uid of team manager",
+        "is_active": "boolean",
+        "created_at": "timestamp",
+        "updated_at": "timestamp",
+        "created_by": "string"
+      }
+    },
+    "groups": {
+      "description": "Sub-groups within teams",
+      "fields": {
+        "name": "string",
+        "description": "string",
+        "team_id": "string - reference to parent team",
+        "lead_uid": "string - uid of group team lead",
+        "is_active": "boolean",
+        "created_at": "timestamp",
+        "updated_at": "timestamp",
+        "created_by": "string"
+      }
+    },
+    "leads": {
+      "description": "All leads/prospects",
+      "fields": {
+        "client_name": "string",
+        "phone": "string",
+        "email": "string",
+        "business_category": "string - CityFinSol, Xtrazcon, etc.",
+        "lead_source": "string - Website, Referral, Social Media, Cold Call, Email Campaign, Trade Show, Other",
+        "stage": "string - new, contacted, qualified, proposal, negotiation, won, lost",
+        "health": "string - hot, warm, cold",
+        "rating": "int - 1 to 5",
+        "expected_value": "number",
+        "expected_close_date": "timestamp",
+        "notes": "string",
+        "owner_uid": "string - assigned sales rep uid",
+        "team_id": "string",
+        "group_id": "string",
+        "payment_status": "string - pending, partial, paid",
+        "activity_status": "string - active, inactive, follow_up",
+        "submitter_name": "string",
+        "submitter_phone": "string",
+        "submitter_relation": "string",
+        "custom_fields": "map - admin-defined custom fields",
+        "created_at": "timestamp",
+        "updated_at": "timestamp",
+        "created_by": "string"
+      }
+    },
+    "templates_email": {
+      "description": "Email templates per business category",
+      "fields": {
+        "name": "string",
+        "subject": "string",
+        "body": "string - supports placeholders like {{client_name}}",
+        "business_category": "string",
+        "is_active": "boolean",
+        "created_at": "timestamp",
+        "updated_at": "timestamp"
+      }
+    },
+    "templates_whatsapp": {
+      "description": "WhatsApp message templates",
+      "fields": {
+        "name": "string",
+        "message": "string - supports placeholders",
+        "business_category": "string",
+        "is_active": "boolean",
+        "created_at": "timestamp",
+        "updated_at": "timestamp"
+      }
+    },
+    "calendar_events": {
+      "description": "Google Calendar events with Meet links",
+      "fields": {
+        "title": "string",
+        "description": "string",
+        "lead_id": "string - reference to lead",
+        "meet_link": "string - Google Meet URL",
+        "start_time": "timestamp",
+        "end_time": "timestamp",
+        "attendees": "array of strings - emails",
+        "created_by": "string",
+        "created_at": "timestamp"
+      }
+    },
+    "logs_email": {
+      "description": "Email send logs",
+      "fields": {
+        "lead_id": "string",
+        "template_id": "string",
+        "to_email": "string",
+        "subject": "string",
+        "status": "string - sent, failed",
+        "sent_at": "timestamp",
+        "sent_by": "string"
+      }
+    },
+    "logs_meet": {
+      "description": "Google Meet creation logs",
+      "fields": {
+        "lead_id": "string",
+        "event_id": "string",
+        "meet_link": "string",
+        "created_at": "timestamp",
+        "created_by": "string"
+      }
+    },
+    "activity_logs": {
+      "description": "Audit trail for all actions",
+      "fields": {
+        "action": "string - created_lead, updated_lead, changed_stage, sent_email, etc.",
+        "entity_type": "string - lead, user, team, group",
+        "entity_id": "string",
+        "details": "map - action-specific details",
+        "performed_by": "string - uid",
+        "performed_at": "timestamp"
+      }
+    }
+  }
+}

@@ -1,0 +1,11 @@
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.metadata
+pubspec.lock
+android/.gradle/
+ios/.symlinks/
+ios/Pods/
+*.apk
+*.aab
