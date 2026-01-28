@@ -54,6 +54,10 @@ class DemoDataSeeder {
     'Customer Software CRM/ ERP CMS',
     'Digital Marketing - SEO, Social or PPC',
     'Education',
+    'Ecommerce',
+    'Web Site',
+    'Mobile App',
+    'Others',
   ];
 
   final List<String> _stageLabels = [

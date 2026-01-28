@@ -1570,7 +1570,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           bottomTitles: AxisTitles(
                             sideTitles: SideTitles(
                               showTitles: true,
-                              reservedSize: 52,
+                              reservedSize: 70,
                               getTitlesWidget: (value, meta) {
                                 final idx = value.toInt();
                                 if (idx < 0 ||
@@ -1578,17 +1578,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   return const SizedBox.shrink();
                                 }
                                 final label = LeadStage.values[idx].label;
-                                final short = label.length > 8
-                                    ? '${label.substring(0, 7)}.'
-                                    : label;
-                                return Padding(
-                                  padding: const EdgeInsets.only(top: 8),
-                                  child: Transform.rotate(
-                                    angle: -0.5,
-                                    child: Text(
-                                      short,
-                                      style: const TextStyle(fontSize: 10),
-                                    ),
+                                return SideTitleWidget(
+                                  meta: meta,
+                                  angle: -45 * 3.14159 / 180,
+                                  child: Text(
+                                    label,
+                                    style: const TextStyle(fontSize: 9),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
                                   ),
                                 );
                               },
