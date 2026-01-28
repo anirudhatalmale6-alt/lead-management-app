@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:html' as html;
 import '../models/user.dart';
 
 class AppShell extends StatefulWidget {
@@ -6,6 +7,7 @@ class AppShell extends StatefulWidget {
   final VoidCallback onLogout;
   final List<Widget> screens;
   final bool isAdmin;
+  final VoidCallback? onRefresh;
 
   const AppShell({
     super.key,
@@ -13,6 +15,7 @@ class AppShell extends StatefulWidget {
     required this.onLogout,
     required this.screens,
     this.isAdmin = false,
+    this.onRefresh,
   });
 
   @override
@@ -21,6 +24,47 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   int _selectedIndex = 0;
+  bool _isRefreshing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedIndex();
+  }
+
+  void _loadSavedIndex() {
+    try {
+      final savedIndex = html.window.localStorage['selectedNavIndex'];
+      if (savedIndex != null) {
+        final index = int.tryParse(savedIndex) ?? 0;
+        if (index >= 0 && index < widget.screens.length) {
+          setState(() => _selectedIndex = index);
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading nav index: $e');
+    }
+  }
+
+  void _saveAndSetIndex(int index) {
+    setState(() => _selectedIndex = index);
+    try {
+      html.window.localStorage['selectedNavIndex'] = index.toString();
+    } catch (e) {
+      debugPrint('Error saving nav index: $e');
+    }
+  }
+
+  Future<void> _handleRefresh() async {
+    if (_isRefreshing || widget.onRefresh == null) return;
+    setState(() => _isRefreshing = true);
+    widget.onRefresh!();
+    // Brief delay for visual feedback
+    await Future.delayed(const Duration(milliseconds: 500));
+    if (mounted) {
+      setState(() => _isRefreshing = false);
+    }
+  }
 
   List<NavigationDestination> get _destinations {
     final items = [
@@ -126,8 +170,7 @@ class _AppShellState extends State<AppShell> {
               children: [
                 NavigationRail(
                   selectedIndex: _selectedIndex,
-                  onDestinationSelected: (i) =>
-                      setState(() => _selectedIndex = i),
+                  onDestinationSelected: _saveAndSetIndex,
                   labelType: NavigationRailLabelType.all,
                   leading: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 16),
@@ -164,10 +207,28 @@ class _AppShellState extends State<AppShell> {
                       alignment: Alignment.bottomCenter,
                       child: Padding(
                         padding: const EdgeInsets.only(bottom: 16),
-                        child: IconButton(
-                          onPressed: widget.onLogout,
-                          icon: const Icon(Icons.logout),
-                          tooltip: 'Logout',
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (widget.onRefresh != null)
+                              IconButton(
+                                onPressed: _isRefreshing ? null : _handleRefresh,
+                                icon: _isRefreshing
+                                    ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(strokeWidth: 2),
+                                      )
+                                    : const Icon(Icons.refresh),
+                                tooltip: 'Refresh Data',
+                              ),
+                            const SizedBox(height: 8),
+                            IconButton(
+                              onPressed: widget.onLogout,
+                              icon: const Icon(Icons.logout),
+                              tooltip: 'Logout',
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -185,6 +246,18 @@ class _AppShellState extends State<AppShell> {
           appBar: AppBar(
             title: const Text('Lead Manager'),
             actions: [
+              if (widget.onRefresh != null)
+                IconButton(
+                  onPressed: _isRefreshing ? null : _handleRefresh,
+                  icon: _isRefreshing
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh),
+                  tooltip: 'Refresh Data',
+                ),
               Padding(
                 padding: const EdgeInsets.only(right: 8),
                 child: Row(
@@ -222,8 +295,7 @@ class _AppShellState extends State<AppShell> {
           body: widget.screens[_selectedIndex],
           bottomNavigationBar: NavigationBar(
             selectedIndex: _selectedIndex,
-            onDestinationSelected: (i) =>
-                setState(() => _selectedIndex = i),
+            onDestinationSelected: _saveAndSetIndex,
             destinations: _destinations,
           ),
         );

@@ -68,6 +68,33 @@ class _AppRootState extends State<AppRoot> {
   AppUser? _currentUser;
   List<Lead> _leads = [];
   bool _isLoadingLeads = true;
+  bool _isCheckingAuth = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkExistingAuth();
+  }
+
+  Future<void> _checkExistingAuth() async {
+    try {
+      // Check if user is already logged in
+      final existingUser = await _authService.getCurrentAppUser();
+      if (existingUser != null && mounted) {
+        setState(() {
+          _currentUser = existingUser;
+          _isCheckingAuth = false;
+        });
+        _loadLeads();
+        return;
+      }
+    } catch (e) {
+      debugPrint('Error checking auth: $e');
+    }
+    if (mounted) {
+      setState(() => _isCheckingAuth = false);
+    }
+  }
 
   void _login(AppUser user) {
     setState(() => _currentUser = user);
@@ -247,8 +274,31 @@ class _AppRootState extends State<AppRoot> {
     return lead.ownerUid == _currentUser!.uid;
   }
 
+  void _refreshAllData() {
+    _loadLeads();
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Show loading while checking existing auth
+    if (_isCheckingAuth) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text(
+                'Loading...',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     if (_currentUser == null) {
       return AuthScreen(onLogin: _login);
     }
@@ -299,6 +349,7 @@ class _AppRootState extends State<AppRoot> {
       onLogout: _logout,
       isAdmin: _isAdmin,
       screens: screens,
+      onRefresh: _refreshAllData,
     );
   }
 }
