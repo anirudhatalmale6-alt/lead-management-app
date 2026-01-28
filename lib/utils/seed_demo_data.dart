@@ -46,28 +46,30 @@ class DemoDataSeeder {
     'Andhra Pradesh', 'Kerala', 'Bihar'
   ];
 
+  // Product/Service enum names (must match ProductService enum in lead.dart)
   final List<String> _products = [
-    'CityFinSol Business Listing',
-    'CityFinSol Web, CRM & Apps',
-    'CityFinSol Leads Package',
-    'Custom Website & App',
-    'Customer Software CRM/ ERP CMS',
-    'Digital Marketing - SEO, Social or PPC',
-    'Education',
-    'Ecommerce',
-    'Web Site',
-    'Mobile App',
-    'Others',
+    'cityFinSolBusinessListing',
+    'cityFinSolWebCrmApps',
+    'cityFinSolLeadsPackage',
+    'customWebsiteApp',
+    'customerSoftwareCrmErpCms',
+    'digitalMarketing',
+    'education',
+    'ecommerce',
+    'webSite',
+    'mobileApp',
+    'others',
   ];
 
+  // Stage enum names (must match LeadStage enum in lead.dart)
   final List<String> _stageLabels = [
-    'new_lead', 'contacted', 'demo_scheduled', 'demo_completed',
-    'proposal_sent', 'negotiation', 'win', 'lost'
+    'newLead', 'contacted', 'demoScheduled', 'demoCompleted',
+    'proposalSent', 'negotiation', 'won', 'lost'
   ];
 
   final List<String> _healthLabels = ['hot', 'warm', 'solo', 'sleeping', 'dead', 'junk'];
-  final List<String> _activityLabels = ['idle', 'working', 'follow_up_due', 're_opened', 'closed'];
-  final List<String> _paymentLabels = ['free', 'supported', 'pending', 'partially_paid', 'fully_paid'];
+  final List<String> _activityLabels = ['idle', 'working', 'followUpDue', 'reOpened', 'closed'];
+  final List<String> _paymentLabels = ['free', 'supported', 'pending', 'partiallyPaid', 'fullyPaid'];
   final List<String> _meetingAgendas = ['demo', 'query', 'requirement', 'others', 'none'];
 
   String _randomElement<T>(List<T> list) => list[_random.nextInt(list.length)] as String;
