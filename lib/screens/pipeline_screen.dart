@@ -41,7 +41,7 @@ class _PipelineScreenState extends State<PipelineScreen> {
   bool _canScrollLeft = false;
   bool _canScrollRight = true;
 
-  // Table view column order
+  // Table view column order (draggable)
   List<String> _tableColumns = [
     'Name',
     'Business',
@@ -54,6 +54,7 @@ class _PipelineScreenState extends State<PipelineScreen> {
     'City',
     'Created',
   ];
+  int? _draggedColumnIndex; // Track which column is being dragged
 
   // --- Filter state ---
   final TextEditingController _searchController = TextEditingController();
@@ -578,27 +579,18 @@ class _PipelineScreenState extends State<PipelineScreen> {
                     width: tableWidth,
                     child: Column(
                       children: [
-                        // Column header row
+                        // Column header row - Draggable to reorder
                         Container(
                           color: Colors.grey.shade200,
                           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
                           child: Row(
-                            children: [
-                              for (final col in _tableColumns)
-                                SizedBox(
-                                  width: (col == 'Name' || col == 'Business')
-                                      ? (tableWidth - 32) * 2 / 14
-                                      : (tableWidth - 32) / 14,
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                                    child: Text(
-                                      col,
-                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                ),
-                            ],
+                            children: List.generate(_tableColumns.length, (index) {
+                              final col = _tableColumns[index];
+                              final colWidth = (col == 'Name' || col == 'Business')
+                                  ? (tableWidth - 32) * 2 / 14
+                                  : (tableWidth - 32) / 14;
+                              return _buildDraggableColumnHeader(col, index, colWidth);
+                            }),
                           ),
                         ),
                         // Table rows
@@ -723,6 +715,91 @@ class _PipelineScreenState extends State<PipelineScreen> {
       default:
         return const SizedBox();
     }
+  }
+
+  // Draggable column header for reordering
+  Widget _buildDraggableColumnHeader(String col, int index, double colWidth) {
+    final isDragging = _draggedColumnIndex == index;
+
+    return DragTarget<int>(
+      onWillAcceptWithDetails: (details) => details.data != index,
+      onAcceptWithDetails: (details) {
+        setState(() {
+          final draggedCol = _tableColumns[details.data];
+          _tableColumns.removeAt(details.data);
+          final newIndex = details.data < index ? index - 1 : index;
+          _tableColumns.insert(newIndex, draggedCol);
+          _draggedColumnIndex = null;
+        });
+      },
+      builder: (context, candidateData, rejectedData) {
+        final isHovered = candidateData.isNotEmpty;
+        return Draggable<int>(
+          data: index,
+          onDragStarted: () => setState(() => _draggedColumnIndex = index),
+          onDragEnd: (_) => setState(() => _draggedColumnIndex = null),
+          feedback: Material(
+            elevation: 4,
+            borderRadius: BorderRadius.circular(4),
+            child: Container(
+              width: colWidth,
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+              decoration: BoxDecoration(
+                color: Colors.blue.shade100,
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: Colors.blue.shade400),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.drag_indicator, size: 14, color: Colors.blue.shade600),
+                  const SizedBox(width: 4),
+                  Flexible(
+                    child: Text(
+                      col,
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.blue.shade800),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          childWhenDragging: Container(
+            width: colWidth,
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade300,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: const Text(''),
+          ),
+          child: Container(
+            width: colWidth,
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            decoration: BoxDecoration(
+              color: isHovered ? Colors.blue.shade50 : null,
+              borderRadius: BorderRadius.circular(4),
+              border: isHovered ? Border.all(color: Colors.blue.shade300, width: 2) : null,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.drag_indicator, size: 14, color: Colors.grey.shade500),
+                const SizedBox(width: 2),
+                Flexible(
+                  child: Text(
+                    col,
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildFilterPanel() {

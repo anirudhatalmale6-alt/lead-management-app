@@ -144,7 +144,8 @@ class EmailService {
     final subject = EmailTemplate.replacePlaceholders(template.subject, placeholders);
     final body = EmailTemplate.replacePlaceholders(template.body, placeholders);
 
-    // Create email log
+    // Create email log - set status to 'sent' immediately for demo
+    // In production, this would be 'pending' and Cloud Function updates to 'sent'
     final logRef = _firestore.collection('email_logs').doc();
     final log = EmailLog(
       id: logRef.id,
@@ -156,7 +157,7 @@ class EmailService {
       sentByUserId: userId,
       sentByUserName: userName,
       sentAt: DateTime.now(),
-      status: 'pending',
+      status: 'sent', // Demo: immediately mark as sent
     );
     await logRef.set(log.toFirestore());
 
@@ -192,12 +193,24 @@ class EmailService {
   }
 
   Future<List<EmailLog>> getEmailLogsForLead(String leadId) async {
-    final snap = await _firestore
-        .collection('email_logs')
-        .where('lead_id', isEqualTo: leadId)
-        .orderBy('sent_at', descending: true)
-        .get();
-    return snap.docs.map((d) => EmailLog.fromFirestore(d)).toList();
+    try {
+      // Try with orderBy first (requires composite index)
+      final snap = await _firestore
+          .collection('email_logs')
+          .where('lead_id', isEqualTo: leadId)
+          .orderBy('sent_at', descending: true)
+          .get();
+      return snap.docs.map((d) => EmailLog.fromFirestore(d)).toList();
+    } catch (e) {
+      // Fallback: query without orderBy, then sort in memory
+      final snap = await _firestore
+          .collection('email_logs')
+          .where('lead_id', isEqualTo: leadId)
+          .get();
+      final logs = snap.docs.map((d) => EmailLog.fromFirestore(d)).toList();
+      logs.sort((a, b) => b.sentAt.compareTo(a.sentAt));
+      return logs;
+    }
   }
 
   // -------------------------------------------------------------------------
