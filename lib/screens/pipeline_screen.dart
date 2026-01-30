@@ -23,9 +23,37 @@ class PipelineScreen extends StatefulWidget {
   State<PipelineScreen> createState() => _PipelineScreenState();
 }
 
+enum PipelineViewType { kanban, table }
+enum SortField { createdAt, name, rating, stage, health }
+enum SortOrder { asc, desc }
+
 class _PipelineScreenState extends State<PipelineScreen> {
   LeadStage? _hoveredStage;
   bool _showFilters = false;
+  PipelineViewType _viewType = PipelineViewType.kanban;
+
+  // Sorting state
+  SortField _sortField = SortField.createdAt;
+  SortOrder _sortOrder = SortOrder.desc; // Latest first by default
+
+  // Scroll controller for Kanban view
+  final ScrollController _kanbanScrollController = ScrollController();
+  bool _canScrollLeft = false;
+  bool _canScrollRight = true;
+
+  // Table view column order
+  List<String> _tableColumns = [
+    'Name',
+    'Business',
+    'Stage',
+    'Health',
+    'Product',
+    'Rating',
+    'Activity',
+    'Payment',
+    'City',
+    'Created',
+  ];
 
   // --- Filter state ---
   final TextEditingController _searchController = TextEditingController();
@@ -43,8 +71,24 @@ class _PipelineScreenState extends State<PipelineScreen> {
   static const List<LeadStage> _stages = LeadStage.values;
 
   @override
+  void initState() {
+    super.initState();
+    _kanbanScrollController.addListener(_updateScrollIndicators);
+  }
+
+  void _updateScrollIndicators() {
+    if (!_kanbanScrollController.hasClients) return;
+    setState(() {
+      _canScrollLeft = _kanbanScrollController.offset > 10;
+      _canScrollRight = _kanbanScrollController.offset <
+          (_kanbanScrollController.position.maxScrollExtent - 10);
+    });
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
+    _kanbanScrollController.dispose();
     super.dispose();
   }
 
@@ -62,7 +106,7 @@ class _PipelineScreenState extends State<PipelineScreen> {
       _filterHasMeeting;
 
   List<Lead> get _filteredLeads {
-    var results = widget.leads;
+    var results = widget.leads.toList();
 
     // Keyword search
     final query = _searchController.text.trim().toLowerCase();
@@ -123,7 +167,36 @@ class _PipelineScreenState extends State<PipelineScreen> {
       results = results.where((l) => l.meetingDate != null).toList();
     }
 
+    // Apply sorting
+    results = _sortLeads(results);
+
     return results;
+  }
+
+  List<Lead> _sortLeads(List<Lead> leads) {
+    final sorted = List<Lead>.from(leads);
+    sorted.sort((a, b) {
+      int comparison;
+      switch (_sortField) {
+        case SortField.createdAt:
+          comparison = a.createdAt.compareTo(b.createdAt);
+          break;
+        case SortField.name:
+          comparison = a.clientName.toLowerCase().compareTo(b.clientName.toLowerCase());
+          break;
+        case SortField.rating:
+          comparison = a.rating.compareTo(b.rating);
+          break;
+        case SortField.stage:
+          comparison = a.stage.index.compareTo(b.stage.index);
+          break;
+        case SortField.health:
+          comparison = a.health.index.compareTo(b.health.index);
+          break;
+      }
+      return _sortOrder == SortOrder.asc ? comparison : -comparison;
+    });
+    return sorted;
   }
 
   List<Lead> _leadsForStage(LeadStage stage) {
@@ -174,7 +247,7 @@ class _PipelineScreenState extends State<PipelineScreen> {
       backgroundColor: Colors.grey.shade100,
       body: Column(
         children: [
-          // Search bar + filter toggle
+          // Search bar + filter toggle + view toggle
           Container(
             color: Colors.white,
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
@@ -210,6 +283,29 @@ class _PipelineScreenState extends State<PipelineScreen> {
                             borderSide: BorderSide(color: Colors.grey.shade300),
                           ),
                         ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    // View toggle
+                    SegmentedButton<PipelineViewType>(
+                      segments: const [
+                        ButtonSegment(
+                          value: PipelineViewType.kanban,
+                          icon: Icon(Icons.view_kanban, size: 18),
+                          label: Text('Kanban'),
+                        ),
+                        ButtonSegment(
+                          value: PipelineViewType.table,
+                          icon: Icon(Icons.table_chart, size: 18),
+                          label: Text('Table'),
+                        ),
+                      ],
+                      selected: {_viewType},
+                      onSelectionChanged: (selection) {
+                        setState(() => _viewType = selection.first);
+                      },
+                      style: const ButtonStyle(
+                        visualDensity: VisualDensity.compact,
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -261,17 +357,11 @@ class _PipelineScreenState extends State<PipelineScreen> {
           ),
           // Filter panel (expandable)
           if (_showFilters) _buildFilterPanel(),
-          // Pipeline columns
+          // Pipeline view - Kanban or Table
           Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children:
-                    _stages.map((stage) => _buildStageColumn(stage)).toList(),
-              ),
-            ),
+            child: _viewType == PipelineViewType.kanban
+                ? _buildKanbanViewWithArrows()
+                : _buildTableView(),
           ),
         ],
       ),
@@ -281,6 +371,349 @@ class _PipelineScreenState extends State<PipelineScreen> {
         child: const Icon(Icons.add, color: Colors.white),
       ),
     );
+  }
+
+  Widget _buildKanbanViewWithArrows() {
+    return Stack(
+      children: [
+        // Main scrollable Kanban view
+        Scrollbar(
+          controller: _kanbanScrollController,
+          thumbVisibility: true,
+          trackVisibility: true,
+          child: SingleChildScrollView(
+            controller: _kanbanScrollController,
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 48, vertical: 16),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: _stages.map((stage) => _buildStageColumn(stage)).toList(),
+            ),
+          ),
+        ),
+        // Left arrow
+        if (_canScrollLeft)
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            child: GestureDetector(
+              onTap: () {
+                _kanbanScrollController.animateTo(
+                  (_kanbanScrollController.offset - 300).clamp(0.0, _kanbanScrollController.position.maxScrollExtent),
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeInOut,
+                );
+              },
+              child: Container(
+                width: 40,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Colors.white, Colors.white.withOpacity(0)],
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                  ),
+                ),
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade600,
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 4)],
+                    ),
+                    child: const Icon(Icons.chevron_left, color: Colors.white, size: 24),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        // Right arrow
+        if (_canScrollRight)
+          Positioned(
+            right: 0,
+            top: 0,
+            bottom: 0,
+            child: GestureDetector(
+              onTap: () {
+                _kanbanScrollController.animateTo(
+                  (_kanbanScrollController.offset + 300).clamp(0.0, _kanbanScrollController.position.maxScrollExtent),
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeInOut,
+                );
+              },
+              child: Container(
+                width: 40,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Colors.white.withOpacity(0), Colors.white],
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                  ),
+                ),
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade600,
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 4)],
+                    ),
+                    child: const Icon(Icons.chevron_right, color: Colors.white, size: 24),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        // Stage indicator at the top
+        Positioned(
+          top: 0,
+          left: 48,
+          right: 48,
+          child: Container(
+            height: 4,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade200,
+              borderRadius: BorderRadius.circular(2),
+            ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                if (!_kanbanScrollController.hasClients) return const SizedBox();
+                final maxScroll = _kanbanScrollController.position.maxScrollExtent;
+                final currentScroll = _kanbanScrollController.offset;
+                final progress = maxScroll > 0 ? (currentScroll / maxScroll) : 0.0;
+                final indicatorWidth = constraints.maxWidth * 0.2;
+                return Stack(
+                  children: [
+                    Positioned(
+                      left: (constraints.maxWidth - indicatorWidth) * progress,
+                      child: Container(
+                        width: indicatorWidth,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.blue.shade600,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTableView() {
+    final dateFormat = DateFormat('dd MMM yyyy');
+    final leads = _filteredLeads;
+
+    return Column(
+      children: [
+        // Sort options row
+        Container(
+          color: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            children: [
+              const Text('Sort by: ', style: TextStyle(fontWeight: FontWeight.w500)),
+              const SizedBox(width: 8),
+              DropdownButton<SortField>(
+                value: _sortField,
+                underline: const SizedBox(),
+                items: const [
+                  DropdownMenuItem(value: SortField.createdAt, child: Text('Created Date')),
+                  DropdownMenuItem(value: SortField.name, child: Text('Name')),
+                  DropdownMenuItem(value: SortField.rating, child: Text('Rating')),
+                  DropdownMenuItem(value: SortField.stage, child: Text('Stage')),
+                  DropdownMenuItem(value: SortField.health, child: Text('Health')),
+                ],
+                onChanged: (v) => setState(() => _sortField = v ?? SortField.createdAt),
+              ),
+              const SizedBox(width: 16),
+              IconButton(
+                icon: Icon(
+                  _sortOrder == SortOrder.desc ? Icons.arrow_downward : Icons.arrow_upward,
+                  size: 20,
+                ),
+                tooltip: _sortOrder == SortOrder.desc ? 'Newest first' : 'Oldest first',
+                onPressed: () => setState(() {
+                  _sortOrder = _sortOrder == SortOrder.desc ? SortOrder.asc : SortOrder.desc;
+                }),
+              ),
+              Text(
+                _sortOrder == SortOrder.desc ? 'Newest first' : 'Oldest first',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        // Scrollable table with fixed minimum column widths
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // Calculate total min width: Name(120) + Business(120) + 8 other cols(80 each) = 880
+              const minTableWidth = 880.0;
+              final tableWidth = constraints.maxWidth < minTableWidth
+                  ? minTableWidth
+                  : constraints.maxWidth;
+
+              return Scrollbar(
+                thumbVisibility: true,
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: SizedBox(
+                    width: tableWidth,
+                    child: Column(
+                      children: [
+                        // Column header row
+                        Container(
+                          color: Colors.grey.shade200,
+                          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                          child: Row(
+                            children: [
+                              for (final col in _tableColumns)
+                                SizedBox(
+                                  width: (col == 'Name' || col == 'Business')
+                                      ? (tableWidth - 32) * 2 / 14
+                                      : (tableWidth - 32) / 14,
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                                    child: Text(
+                                      col,
+                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        // Table rows
+                        Expanded(
+                          child: leads.isEmpty
+                              ? const Center(child: Text('No leads found'))
+                              : ListView.builder(
+                                  itemCount: leads.length,
+                                  itemBuilder: (context, index) {
+                                    final lead = leads[index];
+                                    final healthColor = AppTheme.healthColor(lead.health.label);
+                                    final stageColor = AppTheme.stageColor(lead.stage.label);
+
+                                    return InkWell(
+                                      onTap: () => widget.onEditLead(lead),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            vertical: 12, horizontal: 16),
+                                        decoration: BoxDecoration(
+                                          border: Border(
+                                            bottom: BorderSide(color: Colors.grey.shade200),
+                                          ),
+                                          color: index.isEven ? Colors.white : Colors.grey.shade50,
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            for (final col in _tableColumns)
+                                              SizedBox(
+                                                width: (col == 'Name' || col == 'Business')
+                                                    ? (tableWidth - 32) * 2 / 14
+                                                    : (tableWidth - 32) / 14,
+                                                child: Padding(
+                                                  padding:
+                                                      const EdgeInsets.symmetric(horizontal: 4),
+                                                  child: _buildTableCell(
+                                                      col, lead, healthColor, stageColor, dateFormat),
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTableCell(String column, Lead lead, Color healthColor,
+      Color stageColor, DateFormat dateFormat) {
+    switch (column) {
+      case 'Name':
+        return Text(lead.clientName,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w500));
+      case 'Business':
+        return Text(lead.clientBusinessName, overflow: TextOverflow.ellipsis);
+      case 'Stage':
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: stageColor.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            lead.stage.label,
+            style: TextStyle(fontSize: 11, color: stageColor),
+            overflow: TextOverflow.ellipsis,
+          ),
+        );
+      case 'Health':
+        return Row(
+          children: [
+            Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(
+                color: healthColor,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(lead.health.label,
+                  style: const TextStyle(fontSize: 12),
+                  overflow: TextOverflow.ellipsis),
+            ),
+          ],
+        );
+      case 'Product':
+        return Text(lead.interestedInProduct.label,
+            style: const TextStyle(fontSize: 12),
+            overflow: TextOverflow.ellipsis);
+      case 'Rating':
+        return Text('${lead.rating}',
+            style: TextStyle(
+                fontWeight: FontWeight.bold, color: stageColor));
+      case 'Activity':
+        return Text(lead.activityState.label,
+            style: const TextStyle(fontSize: 12),
+            overflow: TextOverflow.ellipsis);
+      case 'Payment':
+        return Text(lead.paymentStatus.label,
+            style: const TextStyle(fontSize: 12),
+            overflow: TextOverflow.ellipsis);
+      case 'City':
+        return Text(lead.clientCity,
+            style: const TextStyle(fontSize: 12),
+            overflow: TextOverflow.ellipsis);
+      case 'Created':
+        return Text(dateFormat.format(lead.createdAt),
+            style: TextStyle(fontSize: 11, color: Colors.grey.shade600));
+      default:
+        return const SizedBox();
+    }
   }
 
   Widget _buildFilterPanel() {
@@ -621,12 +1054,14 @@ class _PipelineScreenState extends State<PipelineScreen> {
                 ),
               ),
               const Divider(height: 1),
-              // Lead cards list
-              ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.of(context).size.height - 280,
-                ),
-                child: stageLeads.isEmpty
+              // Lead cards list with scrollbar
+              Flexible(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.of(context).size.height - 250,
+                    minHeight: 100,
+                  ),
+                  child: stageLeads.isEmpty
                     ? Padding(
                         padding: const EdgeInsets.all(24),
                         child: Center(
@@ -640,15 +1075,20 @@ class _PipelineScreenState extends State<PipelineScreen> {
                           ),
                         ),
                       )
-                    : ListView.builder(
-                        shrinkWrap: true,
-                        padding: const EdgeInsets.symmetric(
-                            vertical: 8, horizontal: 8),
-                        itemCount: stageLeads.length,
-                        itemBuilder: (context, index) {
-                          return _buildLeadCard(stageLeads[index], color);
-                        },
+                    : Scrollbar(
+                        thumbVisibility: true,
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 8, horizontal: 8),
+                          itemCount: stageLeads.length,
+                          itemBuilder: (context, index) {
+                            return _buildLeadCard(stageLeads[index], color);
+                          },
+                        ),
                       ),
+                ),
               ),
             ],
           ),

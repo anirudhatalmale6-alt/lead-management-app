@@ -356,6 +356,9 @@ class _AuthScreenState extends State<AuthScreen>
                           TextFormField(
                             controller: _passwordController,
                             obscureText: _obscurePassword,
+                            autocorrect: false,
+                            enableSuggestions: false,
+                            autofillHints: _isSignUp ? null : const [AutofillHints.password],
                             decoration: InputDecoration(
                               labelText: 'Password',
                               prefixIcon: const Icon(Icons.lock_outline),
@@ -392,6 +395,9 @@ class _AuthScreenState extends State<AuthScreen>
                             TextFormField(
                               controller: _confirmPasswordController,
                               obscureText: _obscureConfirmPassword,
+                              autocorrect: false,
+                              enableSuggestions: false,
+                              autofillHints: null,
                               decoration: InputDecoration(
                                 labelText: 'Confirm Password',
                                 prefixIcon:
