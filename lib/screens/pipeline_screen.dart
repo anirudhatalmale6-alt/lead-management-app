@@ -41,8 +41,8 @@ class _PipelineScreenState extends State<PipelineScreen> {
   bool _canScrollLeft = false;
   bool _canScrollRight = true;
 
-  // Table view column order (draggable)
-  List<String> _tableColumns = [
+  // Table view column configuration
+  static const List<String> _defaultColumns = [
     'Name',
     'Business',
     'Stage',
@@ -54,7 +54,12 @@ class _PipelineScreenState extends State<PipelineScreen> {
     'City',
     'Created',
   ];
-  int? _draggedColumnIndex; // Track which column is being dragged
+  List<String> _tableColumns = List.from(_defaultColumns);
+  Set<String> _hiddenColumns = {}; // Columns that are hidden
+
+  // Get visible columns only
+  List<String> get _visibleColumns =>
+      _tableColumns.where((c) => !_hiddenColumns.contains(c)).toList();
 
   // --- Filter state ---
   final TextEditingController _searchController = TextEditingController();
@@ -517,7 +522,7 @@ class _PipelineScreenState extends State<PipelineScreen> {
 
     return Column(
       children: [
-        // Sort options row - made scrollable for mobile
+        // Sort options row with column settings button
         Container(
           color: Colors.white,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -525,6 +530,17 @@ class _PipelineScreenState extends State<PipelineScreen> {
             scrollDirection: Axis.horizontal,
             child: Row(
               children: [
+                // Column Settings Button - unique approach
+                FilledButton.tonalIcon(
+                  onPressed: _showColumnSettingsDialog,
+                  icon: const Icon(Icons.view_column, size: 18),
+                  label: const Text('Columns'),
+                  style: FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  ),
+                ),
+                const SizedBox(width: 16),
                 const Text('Sort by: ', style: TextStyle(fontWeight: FontWeight.w500)),
                 const SizedBox(width: 8),
                 DropdownButton<SortField>(
@@ -556,6 +572,15 @@ class _PipelineScreenState extends State<PipelineScreen> {
                   _sortOrder == SortOrder.desc ? 'Newest' : 'Oldest',
                   style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
                 ),
+                if (_hiddenColumns.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  Chip(
+                    label: Text('${_hiddenColumns.length} hidden'),
+                    deleteIcon: const Icon(Icons.visibility, size: 16),
+                    onDeleted: () => setState(() => _hiddenColumns.clear()),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
               ],
             ),
           ),
@@ -579,17 +604,29 @@ class _PipelineScreenState extends State<PipelineScreen> {
                     width: tableWidth,
                     child: Column(
                       children: [
-                        // Column header row - Draggable to reorder
+                        // Column header row
                         Container(
                           color: Colors.grey.shade200,
                           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
                           child: Row(
-                            children: List.generate(_tableColumns.length, (index) {
-                              final col = _tableColumns[index];
-                              final colWidth = (col == 'Name' || col == 'Business')
-                                  ? (tableWidth - 32) * 2 / 14
-                                  : (tableWidth - 32) / 14;
-                              return _buildDraggableColumnHeader(col, index, colWidth);
+                            children: List.generate(_visibleColumns.length, (index) {
+                              final col = _visibleColumns[index];
+                              final totalCols = _visibleColumns.length;
+                              final wideCount = _visibleColumns.where((c) => c == 'Name' || c == 'Business').length;
+                              final normalCount = totalCols - wideCount;
+                              final unitWidth = (tableWidth - 32) / (wideCount * 2 + normalCount);
+                              final colWidth = (col == 'Name' || col == 'Business') ? unitWidth * 2 : unitWidth;
+                              return SizedBox(
+                                width: colWidth,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                                  child: Text(
+                                    col,
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              );
                             }),
                           ),
                         ),
@@ -617,18 +654,21 @@ class _PipelineScreenState extends State<PipelineScreen> {
                                         ),
                                         child: Row(
                                           children: [
-                                            for (final col in _tableColumns)
-                                              SizedBox(
-                                                width: (col == 'Name' || col == 'Business')
-                                                    ? (tableWidth - 32) * 2 / 14
-                                                    : (tableWidth - 32) / 14,
-                                                child: Padding(
-                                                  padding:
-                                                      const EdgeInsets.symmetric(horizontal: 4),
-                                                  child: _buildTableCell(
-                                                      col, lead, healthColor, stageColor, dateFormat),
-                                                ),
-                                              ),
+                                            for (final col in _visibleColumns)
+                                              Builder(builder: (context) {
+                                                final totalCols = _visibleColumns.length;
+                                                final wideCount = _visibleColumns.where((c) => c == 'Name' || c == 'Business').length;
+                                                final normalCount = totalCols - wideCount;
+                                                final unitWidth = (tableWidth - 32) / (wideCount * 2 + normalCount);
+                                                final colWidth = (col == 'Name' || col == 'Business') ? unitWidth * 2 : unitWidth;
+                                                return SizedBox(
+                                                  width: colWidth,
+                                                  child: Padding(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                                                    child: _buildTableCell(col, lead, healthColor, stageColor, dateFormat),
+                                                  ),
+                                                );
+                                              }),
                                           ],
                                         ),
                                       ),
@@ -717,89 +757,247 @@ class _PipelineScreenState extends State<PipelineScreen> {
     }
   }
 
-  // Draggable column header for reordering
-  Widget _buildDraggableColumnHeader(String col, int index, double colWidth) {
-    final isDragging = _draggedColumnIndex == index;
+  // Show unique column settings dialog with drag-to-reorder and show/hide toggles
+  void _showColumnSettingsDialog() {
+    // Create local copies for the dialog
+    List<String> tempColumns = List.from(_tableColumns);
+    Set<String> tempHidden = Set.from(_hiddenColumns);
 
-    return DragTarget<int>(
-      onWillAcceptWithDetails: (details) => details.data != index,
-      onAcceptWithDetails: (details) {
-        setState(() {
-          final draggedCol = _tableColumns[details.data];
-          _tableColumns.removeAt(details.data);
-          final newIndex = details.data < index ? index - 1 : index;
-          _tableColumns.insert(newIndex, draggedCol);
-          _draggedColumnIndex = null;
-        });
-      },
-      builder: (context, candidateData, rejectedData) {
-        final isHovered = candidateData.isNotEmpty;
-        return Draggable<int>(
-          data: index,
-          onDragStarted: () => setState(() => _draggedColumnIndex = index),
-          onDragEnd: (_) => setState(() => _draggedColumnIndex = null),
-          feedback: Material(
-            elevation: 4,
-            borderRadius: BorderRadius.circular(4),
-            child: Container(
-              width: colWidth,
-              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
-              decoration: BoxDecoration(
-                color: Colors.blue.shade100,
-                borderRadius: BorderRadius.circular(4),
-                border: Border.all(color: Colors.blue.shade400),
-              ),
-              child: Row(
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          return Dialog(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 400, maxHeight: 600),
+              child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.drag_indicator, size: 14, color: Colors.blue.shade600),
-                  const SizedBox(width: 4),
+                  // Header
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Colors.blue.shade600, Colors.blue.shade400],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(12),
+                        topRight: Radius.circular(12),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.view_column, color: Colors.white),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Customize Columns',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                'Drag to reorder • Toggle to show/hide',
+                                style: TextStyle(color: Colors.white70, fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white),
+                          onPressed: () => Navigator.pop(ctx),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Column list
                   Flexible(
-                    child: Text(
-                      col,
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.blue.shade800),
-                      overflow: TextOverflow.ellipsis,
+                    child: ReorderableListView.builder(
+                      shrinkWrap: true,
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      itemCount: tempColumns.length,
+                      onReorder: (oldIndex, newIndex) {
+                        setDialogState(() {
+                          if (newIndex > oldIndex) newIndex--;
+                          final item = tempColumns.removeAt(oldIndex);
+                          tempColumns.insert(newIndex, item);
+                        });
+                      },
+                      itemBuilder: (context, index) {
+                        final col = tempColumns[index];
+                        final isHidden = tempHidden.contains(col);
+                        final colIcon = _getColumnIcon(col);
+
+                        return Material(
+                          key: ValueKey(col),
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: isHidden ? Colors.grey.shade100 : Colors.white,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: isHidden ? Colors.grey.shade300 : Colors.blue.shade200,
+                                width: 1.5,
+                              ),
+                              boxShadow: isHidden
+                                  ? null
+                                  : [
+                                      BoxShadow(
+                                        color: Colors.blue.withOpacity(0.1),
+                                        blurRadius: 4,
+                                        offset: const Offset(0, 2),
+                                      ),
+                                    ],
+                            ),
+                            child: ListTile(
+                              leading: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  ReorderableDragStartListener(
+                                    index: index,
+                                    child: Container(
+                                      padding: const EdgeInsets.all(8),
+                                      child: Icon(
+                                        Icons.drag_indicator,
+                                        color: Colors.grey.shade500,
+                                      ),
+                                    ),
+                                  ),
+                                  Container(
+                                    width: 36,
+                                    height: 36,
+                                    decoration: BoxDecoration(
+                                      color: isHidden
+                                          ? Colors.grey.shade200
+                                          : Colors.blue.shade50,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Icon(
+                                      colIcon,
+                                      size: 18,
+                                      color: isHidden ? Colors.grey : Colors.blue.shade600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              title: Text(
+                                col,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  color: isHidden ? Colors.grey : Colors.black87,
+                                  decoration: isHidden ? TextDecoration.lineThrough : null,
+                                ),
+                              ),
+                              subtitle: Text(
+                                isHidden ? 'Hidden' : 'Visible',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: isHidden ? Colors.grey : Colors.green.shade600,
+                                ),
+                              ),
+                              trailing: Switch(
+                                value: !isHidden,
+                                onChanged: (val) {
+                                  setDialogState(() {
+                                    if (val) {
+                                      tempHidden.remove(col);
+                                    } else {
+                                      tempHidden.add(col);
+                                    }
+                                  });
+                                },
+                                activeColor: Colors.green,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  // Footer with actions
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade50,
+                      borderRadius: const BorderRadius.only(
+                        bottomLeft: Radius.circular(12),
+                        bottomRight: Radius.circular(12),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        TextButton.icon(
+                          onPressed: () {
+                            setDialogState(() {
+                              tempColumns = List.from(_defaultColumns);
+                              tempHidden.clear();
+                            });
+                          },
+                          icon: const Icon(Icons.restart_alt, size: 18),
+                          label: const Text('Reset'),
+                        ),
+                        const Spacer(),
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          child: const Text('Cancel'),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton.icon(
+                          onPressed: () {
+                            setState(() {
+                              _tableColumns = tempColumns;
+                              _hiddenColumns = tempHidden;
+                            });
+                            Navigator.pop(ctx);
+                          },
+                          icon: const Icon(Icons.check, size: 18),
+                          label: const Text('Apply'),
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
             ),
-          ),
-          childWhenDragging: Container(
-            width: colWidth,
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            decoration: BoxDecoration(
-              color: Colors.grey.shade300,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: const Text(''),
-          ),
-          child: Container(
-            width: colWidth,
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            decoration: BoxDecoration(
-              color: isHovered ? Colors.blue.shade50 : null,
-              borderRadius: BorderRadius.circular(4),
-              border: isHovered ? Border.all(color: Colors.blue.shade300, width: 2) : null,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.drag_indicator, size: 14, color: Colors.grey.shade500),
-                const SizedBox(width: 2),
-                Flexible(
-                  child: Text(
-                    col,
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
+  }
+
+  // Get icon for each column type
+  IconData _getColumnIcon(String col) {
+    switch (col) {
+      case 'Name':
+        return Icons.person;
+      case 'Business':
+        return Icons.business;
+      case 'Stage':
+        return Icons.trending_up;
+      case 'Health':
+        return Icons.favorite;
+      case 'Product':
+        return Icons.shopping_bag;
+      case 'Rating':
+        return Icons.star;
+      case 'Activity':
+        return Icons.schedule;
+      case 'Payment':
+        return Icons.payment;
+      case 'City':
+        return Icons.location_city;
+      case 'Created':
+        return Icons.calendar_today;
+      default:
+        return Icons.text_fields;
+    }
   }
 
   Widget _buildFilterPanel() {
