@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/lead.dart';
 import '../models/user.dart';
+import '../data/location_data.dart';
 
 class LeadFormScreen extends StatefulWidget {
   final Lead? existingLead;
@@ -28,9 +29,16 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
   late final TextEditingController _clientWhatsAppController;
   late final TextEditingController _clientMobileController;
   late final TextEditingController _clientEmailController;
-  late final TextEditingController _countryController;
-  late final TextEditingController _stateController;
-  late final TextEditingController _clientCityController;
+  String? _selectedCountry;
+  String? _selectedState;
+  String? _selectedCity;
+  List<String> _availableStates = [];
+  List<String> _availableCities = [];
+
+  // Custom text fields for "Other" option
+  late final TextEditingController _customCountryController;
+  late final TextEditingController _customStateController;
+  late final TextEditingController _customCityController;
 
   // Section 2: Lead Status
   late ProductService _interestedInProduct;
@@ -83,12 +91,45 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
         TextEditingController(text: lead?.clientMobile ?? '');
     _clientEmailController =
         TextEditingController(text: lead?.clientEmail ?? '');
-    _countryController =
-        TextEditingController(text: lead?.country ?? '');
-    _stateController =
-        TextEditingController(text: lead?.state ?? '');
-    _clientCityController =
-        TextEditingController(text: lead?.clientCity ?? '');
+
+    // Initialize location dropdowns
+    // Check if existing values are in the dropdown lists, otherwise treat as custom
+    final existingCountry = lead?.country ?? '';
+    final existingState = lead?.state ?? '';
+    final existingCity = lead?.clientCity ?? '';
+
+    if (existingCountry.isNotEmpty && LocationData.countries.contains(existingCountry)) {
+      _selectedCountry = existingCountry;
+      _availableStates = LocationData.getStates(existingCountry);
+    } else if (existingCountry.isNotEmpty) {
+      _selectedCountry = 'Other';
+      _availableStates = LocationData.getStates('Other');
+    }
+
+    if (existingState.isNotEmpty && _availableStates.contains(existingState)) {
+      _selectedState = existingState;
+      _availableCities = LocationData.getCities(existingState);
+    } else if (existingState.isNotEmpty) {
+      _selectedState = 'Other';
+      _availableCities = LocationData.getCities('Other');
+    }
+
+    if (existingCity.isNotEmpty && _availableCities.contains(existingCity)) {
+      _selectedCity = existingCity;
+    } else if (existingCity.isNotEmpty) {
+      _selectedCity = 'Other';
+    }
+
+    // Initialize custom text controllers
+    _customCountryController = TextEditingController(
+      text: (_selectedCountry == 'Other' && existingCountry != 'Other') ? existingCountry : '',
+    );
+    _customStateController = TextEditingController(
+      text: (_selectedState == 'Other' && existingState != 'Other') ? existingState : '',
+    );
+    _customCityController = TextEditingController(
+      text: (_selectedCity == 'Other' && existingCity != 'Other') ? existingCity : '',
+    );
 
     // Section 2: Lead Status
     _interestedInProduct =
@@ -154,9 +195,9 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
     _clientWhatsAppController.dispose();
     _clientMobileController.dispose();
     _clientEmailController.dispose();
-    _countryController.dispose();
-    _stateController.dispose();
-    _clientCityController.dispose();
+    _customCountryController.dispose();
+    _customStateController.dispose();
+    _customCityController.dispose();
     _meetingDateController.dispose();
     _meetingTimeController.dispose();
     _meetingLinkController.dispose();
@@ -201,6 +242,34 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
   // Save
   // ---------------------------------------------------------------------------
 
+  // Helper to get the actual location value (custom text or dropdown value)
+  String _getCountryValue() {
+    if (_selectedCountry == 'Other') {
+      return _customCountryController.text.trim().isNotEmpty
+          ? _customCountryController.text.trim()
+          : 'Other';
+    }
+    return _selectedCountry ?? '';
+  }
+
+  String _getStateValue() {
+    if (_selectedState == 'Other') {
+      return _customStateController.text.trim().isNotEmpty
+          ? _customStateController.text.trim()
+          : 'Other';
+    }
+    return _selectedState ?? '';
+  }
+
+  String _getCityValue() {
+    if (_selectedCity == 'Other') {
+      return _customCityController.text.trim().isNotEmpty
+          ? _customCityController.text.trim()
+          : 'Other';
+    }
+    return _selectedCity ?? '';
+  }
+
   void _handleSave() {
     if (!_formKey.currentState!.validate()) return;
 
@@ -211,9 +280,9 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
       lead.clientWhatsApp = _clientWhatsAppController.text.trim();
       lead.clientMobile = _clientMobileController.text.trim();
       lead.clientEmail = _clientEmailController.text.trim();
-      lead.country = _countryController.text.trim();
-      lead.state = _stateController.text.trim();
-      lead.clientCity = _clientCityController.text.trim();
+      lead.country = _getCountryValue();
+      lead.state = _getStateValue();
+      lead.clientCity = _getCityValue();
       lead.interestedInProduct = _interestedInProduct;
       lead.rating = _rating;
       lead.health = _health;
@@ -244,9 +313,9 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
         clientWhatsApp: _clientWhatsAppController.text.trim(),
         clientMobile: _clientMobileController.text.trim(),
         clientEmail: _clientEmailController.text.trim(),
-        country: _countryController.text.trim(),
-        state: _stateController.text.trim(),
-        clientCity: _clientCityController.text.trim(),
+        country: _getCountryValue(),
+        state: _getStateValue(),
+        clientCity: _getCityValue(),
         interestedInProduct: _interestedInProduct,
         rating: _rating,
         health: _health,
@@ -348,18 +417,110 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
         label: 'Email',
         keyboardType: TextInputType.emailAddress,
       ),
-      _buildTextField(
-        controller: _countryController,
-        label: 'Country',
+      // Country dropdown
+      DropdownButtonFormField<String>(
+        value: _selectedCountry,
+        decoration: const InputDecoration(
+          labelText: 'Country',
+          border: OutlineInputBorder(),
+        ),
+        items: [
+          const DropdownMenuItem<String>(
+            value: null,
+            child: Text('Select Country'),
+          ),
+          ...LocationData.countries.map((country) => DropdownMenuItem<String>(
+                value: country,
+                child: Text(country),
+              )),
+        ],
+        onChanged: (value) {
+          setState(() {
+            _selectedCountry = value;
+            _selectedState = null;
+            _selectedCity = null;
+            _customCountryController.clear();
+            _customStateController.clear();
+            _customCityController.clear();
+            _availableStates = value != null ? LocationData.getStates(value) : [];
+            _availableCities = [];
+          });
+        },
       ),
-      _buildTextField(
-        controller: _stateController,
-        label: 'State',
+      // Custom Country text field (when "Other" is selected)
+      if (_selectedCountry == 'Other')
+        _buildTextField(
+          controller: _customCountryController,
+          label: 'Enter Country Name',
+        ),
+      // State dropdown
+      DropdownButtonFormField<String>(
+        value: _selectedState,
+        decoration: const InputDecoration(
+          labelText: 'State',
+          border: OutlineInputBorder(),
+        ),
+        items: [
+          const DropdownMenuItem<String>(
+            value: null,
+            child: Text('Select State'),
+          ),
+          ..._availableStates.map((state) => DropdownMenuItem<String>(
+                value: state,
+                child: Text(state),
+              )),
+        ],
+        onChanged: _selectedCountry == null
+            ? null
+            : (value) {
+                setState(() {
+                  _selectedState = value;
+                  _selectedCity = null;
+                  _customStateController.clear();
+                  _customCityController.clear();
+                  _availableCities =
+                      value != null ? LocationData.getCities(value) : [];
+                });
+              },
       ),
-      _buildTextField(
-        controller: _clientCityController,
-        label: 'City',
+      // Custom State text field (when "Other" is selected)
+      if (_selectedState == 'Other')
+        _buildTextField(
+          controller: _customStateController,
+          label: 'Enter State Name',
+        ),
+      // City dropdown
+      DropdownButtonFormField<String>(
+        value: _selectedCity,
+        decoration: const InputDecoration(
+          labelText: 'City',
+          border: OutlineInputBorder(),
+        ),
+        items: [
+          const DropdownMenuItem<String>(
+            value: null,
+            child: Text('Select City'),
+          ),
+          ..._availableCities.map((city) => DropdownMenuItem<String>(
+                value: city,
+                child: Text(city),
+              )),
+        ],
+        onChanged: _selectedState == null
+            ? null
+            : (value) {
+                setState(() {
+                  _selectedCity = value;
+                  _customCityController.clear();
+                });
+              },
       ),
+      // Custom City text field (when "Other" is selected)
+      if (_selectedCity == 'Other')
+        _buildTextField(
+          controller: _customCityController,
+          label: 'Enter City Name',
+        ),
     ];
 
     return _buildSectionCard(

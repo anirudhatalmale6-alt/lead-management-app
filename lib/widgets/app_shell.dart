@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'dart:html' as html;
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user.dart';
 
 class AppShell extends StatefulWidget {
@@ -32,24 +32,23 @@ class _AppShellState extends State<AppShell> {
     _loadSavedIndex();
   }
 
-  void _loadSavedIndex() {
+  Future<void> _loadSavedIndex() async {
     try {
-      final savedIndex = html.window.localStorage['selectedNavIndex'];
-      if (savedIndex != null) {
-        final index = int.tryParse(savedIndex) ?? 0;
-        if (index >= 0 && index < widget.screens.length) {
-          setState(() => _selectedIndex = index);
-        }
+      final prefs = await SharedPreferences.getInstance();
+      final savedIndex = prefs.getInt('selectedNavIndex') ?? 0;
+      if (savedIndex >= 0 && savedIndex < widget.screens.length) {
+        setState(() => _selectedIndex = savedIndex);
       }
     } catch (e) {
       debugPrint('Error loading nav index: $e');
     }
   }
 
-  void _saveAndSetIndex(int index) {
+  Future<void> _saveAndSetIndex(int index) async {
     setState(() => _selectedIndex = index);
     try {
-      html.window.localStorage['selectedNavIndex'] = index.toString();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt('selectedNavIndex', index);
     } catch (e) {
       debugPrint('Error saving nav index: $e');
     }
@@ -67,7 +66,7 @@ class _AppShellState extends State<AppShell> {
   }
 
   List<NavigationDestination> get _destinations {
-    final items = [
+    final items = <NavigationDestination>[
       const NavigationDestination(
         icon: Icon(Icons.dashboard_outlined),
         selectedIcon: Icon(Icons.dashboard),
@@ -87,14 +86,9 @@ class _AppShellState extends State<AppShell> {
     if (widget.isAdmin) {
       items.addAll([
         const NavigationDestination(
-          icon: Icon(Icons.people_outline),
-          selectedIcon: Icon(Icons.people),
-          label: 'Users',
-        ),
-        const NavigationDestination(
-          icon: Icon(Icons.groups_outlined),
-          selectedIcon: Icon(Icons.groups),
-          label: 'Teams',
+          icon: Icon(Icons.admin_panel_settings_outlined),
+          selectedIcon: Icon(Icons.admin_panel_settings),
+          label: 'Admin',
         ),
         const NavigationDestination(
           icon: Icon(Icons.email_outlined),
@@ -109,6 +103,69 @@ class _AppShellState extends State<AppShell> {
       ]);
     }
     return items;
+  }
+
+  /// Scrollable bottom navigation for mobile when many items
+  Widget _buildScrollableBottomNav(ColorScheme cs) {
+    return Container(
+      height: 70,
+      decoration: BoxDecoration(
+        color: cs.surface,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.start,
+          children: _destinations.asMap().entries.map((entry) {
+            final index = entry.key;
+            final dest = entry.value;
+            final isSelected = _selectedIndex == index;
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: InkWell(
+                onTap: () => _saveAndSetIndex(index),
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  width: 64,
+                  padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                  decoration: BoxDecoration(
+                    color: isSelected ? cs.primaryContainer : Colors.transparent,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      isSelected ? (dest.selectedIcon ?? dest.icon) : dest.icon,
+                      const SizedBox(height: 2),
+                      Text(
+                        dest.label,
+                        style: TextStyle(
+                          fontSize: 9,
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                          color: isSelected ? cs.onPrimaryContainer : cs.onSurfaceVariant,
+                        ),
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+    );
   }
 
   List<NavigationRailDestination> get _railDestinations {
@@ -132,14 +189,9 @@ class _AppShellState extends State<AppShell> {
     if (widget.isAdmin) {
       items.addAll([
         const NavigationRailDestination(
-          icon: Icon(Icons.people_outline),
-          selectedIcon: Icon(Icons.people),
-          label: Text('Users'),
-        ),
-        const NavigationRailDestination(
-          icon: Icon(Icons.groups_outlined),
-          selectedIcon: Icon(Icons.groups),
-          label: Text('Teams'),
+          icon: Icon(Icons.admin_panel_settings_outlined),
+          selectedIcon: Icon(Icons.admin_panel_settings),
+          label: Text('Admin'),
         ),
         const NavigationRailDestination(
           icon: Icon(Icons.email_outlined),
@@ -168,45 +220,81 @@ class _AppShellState extends State<AppShell> {
           return Scaffold(
             body: Row(
               children: [
-                NavigationRail(
-                  selectedIndex: _selectedIndex,
-                  onDestinationSelected: _saveAndSetIndex,
-                  labelType: NavigationRailLabelType.all,
-                  leading: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    child: Column(
-                      children: [
-                        CircleAvatar(
-                          radius: 22,
-                          backgroundColor: cs.primaryContainer,
-                          child: Text(
-                            widget.user.name[0].toUpperCase(),
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: cs.onPrimaryContainer,
+                // Wrap NavigationRail in a scrollable column for small screen heights
+                SizedBox(
+                  width: 80,
+                  child: Column(
+                    children: [
+                      // User info header
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        child: Column(
+                          children: [
+                            CircleAvatar(
+                              radius: 22,
+                              backgroundColor: cs.primaryContainer,
+                              child: Text(
+                                widget.user.name[0].toUpperCase(),
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: cs.onPrimaryContainer,
+                                ),
+                              ),
                             ),
+                            const SizedBox(height: 6),
+                            Text(
+                              widget.user.name,
+                              style: Theme.of(context).textTheme.labelSmall,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                            ),
+                            Text(
+                              widget.user.role.label,
+                              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                    color: cs.outline,
+                                  ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Divider(height: 1),
+                      // Scrollable navigation destinations
+                      Expanded(
+                        child: SingleChildScrollView(
+                          child: Column(
+                            children: _railDestinations.asMap().entries.map((entry) {
+                              final index = entry.key;
+                              final dest = entry.value;
+                              final isSelected = _selectedIndex == index;
+                              return InkWell(
+                                onTap: () => _saveAndSetIndex(index),
+                                child: Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                  color: isSelected ? cs.primaryContainer.withOpacity(0.3) : null,
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      isSelected ? (dest.selectedIcon ?? dest.icon) : dest.icon,
+                                      const SizedBox(height: 4),
+                                      DefaultTextStyle(
+                                        style: Theme.of(context).textTheme.labelSmall!.copyWith(
+                                          color: isSelected ? cs.primary : cs.onSurfaceVariant,
+                                          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                        ),
+                                        child: dest.label,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }).toList(),
                           ),
                         ),
-                        const SizedBox(height: 6),
-                        Text(
-                          widget.user.name,
-                          style: Theme.of(context).textTheme.labelSmall,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        Text(
-                          widget.user.role.label,
-                          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                                color: cs.outline,
-                              ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  trailing: Expanded(
-                    child: Align(
-                      alignment: Alignment.bottomCenter,
-                      child: Padding(
-                        padding: const EdgeInsets.only(bottom: 16),
+                      ),
+                      // Bottom actions
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 16, top: 8),
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -231,9 +319,8 @@ class _AppShellState extends State<AppShell> {
                           ],
                         ),
                       ),
-                    ),
+                    ],
                   ),
-                  destinations: _railDestinations,
                 ),
                 const VerticalDivider(thickness: 1, width: 1),
                 Expanded(child: widget.screens[_selectedIndex]),
@@ -241,6 +328,10 @@ class _AppShellState extends State<AppShell> {
             ),
           );
         }
+
+        // For mobile with many nav items, use a scrollable bottom nav
+        final navItemCount = _destinations.length;
+        final useScrollableNav = navItemCount > 5;
 
         return Scaffold(
           appBar: AppBar(
@@ -293,11 +384,14 @@ class _AppShellState extends State<AppShell> {
             ],
           ),
           body: widget.screens[_selectedIndex],
-          bottomNavigationBar: NavigationBar(
-            selectedIndex: _selectedIndex,
-            onDestinationSelected: _saveAndSetIndex,
-            destinations: _destinations,
-          ),
+          bottomNavigationBar: useScrollableNav
+              ? _buildScrollableBottomNav(cs)
+              : NavigationBar(
+                  selectedIndex: _selectedIndex,
+                  onDestinationSelected: _saveAndSetIndex,
+                  destinations: _destinations,
+                  labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+                ),
         );
       },
     );

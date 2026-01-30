@@ -303,14 +303,22 @@ class _AdminScreenState extends State<AdminScreen>
               onPressed: isLoading ? null : () async {
                 if (!formKey.currentState!.validate()) return;
                 setDialogState(() => isLoading = true);
+                // Get user names for display
+                String? managerName = _getUserNameByUid(selectedManager);
+                String? tlName = _getUserNameByUid(selectedTL);
+                String? adminName = _getUserNameByUid(selectedAdmin);
+
                 if (_useMockData) {
                   setState(() {
                     _mockTeams.add({
                       'id': 'team_${DateTime.now().millisecondsSinceEpoch}',
                       'name': nameCtrl.text.trim(),
                       'manager_uid': selectedManager,
+                      'manager_name': managerName ?? 'N/A',
                       'tl_uid': selectedTL,
+                      'tl_name': tlName ?? 'N/A',
                       'admin_uid': selectedAdmin,
+                      'admin_name': adminName ?? 'N/A',
                       'status': status,
                     });
                   });
@@ -321,8 +329,11 @@ class _AdminScreenState extends State<AdminScreen>
                     await FirebaseFirestore.instance.collection('teams').add({
                       'name': nameCtrl.text.trim(),
                       'manager_uid': selectedManager,
+                      'manager_name': managerName ?? 'N/A',
                       'tl_uid': selectedTL,
+                      'tl_name': tlName ?? 'N/A',
                       'admin_uid': selectedAdmin,
+                      'admin_name': adminName ?? 'N/A',
                       'status': status,
                       'created_at': FieldValue.serverTimestamp(),
                     });
@@ -466,14 +477,21 @@ class _AdminScreenState extends State<AdminScreen>
                     rows: _mockGroups.asMap().entries.map((entry) {
                       final idx = entry.key + 1;
                       final grp = entry.value;
+                      // Get member names for display
+                      final memberDisplay = grp['member_names'] != null
+                          ? (grp['member_names'] as List).join(', ')
+                          : (grp['members'] as List?)?.map((uid) => _getUserNameByUid(uid as String) ?? uid).join(', ') ?? '';
                       return DataRow(cells: [
                         DataCell(Text('$idx')),
                         DataCell(Text(grp['name'] ?? '')),
                         DataCell(Text(grp['sub_group_name'] ?? '')),
-                        DataCell(Text(grp['sub_group_manager'] ?? '')),
-                        DataCell(Text(grp['tl_name'] ?? '')),
-                        DataCell(Text(grp['coordinator_name'] ?? '')),
-                        DataCell(Text((grp['members'] as List?)?.join(', ') ?? '')),
+                        DataCell(Text(grp['sub_group_manager'] ?? grp['manager_name'] ?? _getUserNameByUid(grp['manager_uid']) ?? 'N/A')),
+                        DataCell(Text(grp['tl_name'] ?? _getUserNameByUid(grp['tl_uid']) ?? 'N/A')),
+                        DataCell(Text(grp['coordinator_name'] ?? _getUserNameByUid(grp['coordinator_uid']) ?? 'N/A')),
+                        DataCell(SizedBox(
+                          width: 200,
+                          child: Text(memberDisplay.isNotEmpty ? memberDisplay : 'N/A', overflow: TextOverflow.ellipsis),
+                        )),
                         DataCell(_buildStatusChip(grp['status'] ?? false)),
                         DataCell(Text(grp['created_at'] != null ? dateFormat.format(grp['created_at']) : '')),
                         DataCell(Row(
@@ -507,7 +525,8 @@ class _AdminScreenState extends State<AdminScreen>
 
   void _showAddGroupDialog() {
     final nameCtrl = TextEditingController();
-    String? admin, manager, tl;
+    final subGroupNameCtrl = TextEditingController();
+    String? admin, manager, tl, coordinator;
     List<String> selectedMembers = [];
     bool isLoading = false;
 
@@ -517,35 +536,47 @@ class _AdminScreenState extends State<AdminScreen>
         builder: (ctx2, setDialogState) => AlertDialog(
           title: const Text('Add Group'),
           content: SizedBox(
-            width: 400,
+            width: 450,
+            height: 500,
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  TextFormField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Group name')),
+                  TextFormField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Group name', prefixIcon: Icon(Icons.group))),
+                  const SizedBox(height: 12),
+                  TextFormField(controller: subGroupNameCtrl, decoration: const InputDecoration(labelText: 'Sub Group name', prefixIcon: Icon(Icons.subdirectory_arrow_right))),
                   const SizedBox(height: 12),
                   _buildUserDropdown('Admin', admin, (v) => setDialogState(() => admin = v), ['admin', 'super_admin']),
                   const SizedBox(height: 12),
-                  _buildUserDropdown('Manager', manager, (v) => setDialogState(() => manager = v), ['manager']),
+                  _buildUserDropdown('Sub Group Manager', manager, (v) => setDialogState(() => manager = v), ['manager', 'admin']),
                   const SizedBox(height: 12),
-                  _buildUserDropdown('TL', tl, (v) => setDialogState(() => tl = v), ['team_lead']),
+                  _buildUserDropdown('Team Leader (TL)', tl, (v) => setDialogState(() => tl = v), ['team_lead', 'coordinator', 'manager']),
                   const SizedBox(height: 12),
-                  const Text('Select member / Emp', style: TextStyle(fontWeight: FontWeight.w500)),
+                  _buildUserDropdown('Group Coordinator', coordinator, (v) => setDialogState(() => coordinator = v), ['coordinator', 'team_lead']),
+                  const SizedBox(height: 16),
+                  const Text('Select Members / Employees:', style: TextStyle(fontWeight: FontWeight.w500)),
                   const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 4,
-                    children: _mockUsers.where((u) => u.role == UserRole.member || u.role == UserRole.coordinator).map((u) {
-                      final selected = selectedMembers.contains(u.uid);
-                      return FilterChip(
-                        label: Text('${u.name} (${u.uid})'),
-                        selected: selected,
-                        onSelected: (v) => setDialogState(() {
-                          if (v) selectedMembers.add(u.uid);
-                          else selectedMembers.remove(u.uid);
-                        }),
-                      );
-                    }).toList(),
+                  // Show all users except super_admin
+                  Container(
+                    constraints: const BoxConstraints(maxHeight: 150),
+                    child: SingleChildScrollView(
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        children: _mockUsers.where((u) => u.role != UserRole.superAdmin).map((u) {
+                          final selected = selectedMembers.contains(u.uid);
+                          return FilterChip(
+                            label: Text('${u.name} (${u.role.label})'),
+                            selected: selected,
+                            onSelected: (v) => setDialogState(() {
+                              if (v) selectedMembers.add(u.uid);
+                              else selectedMembers.remove(u.uid);
+                            }),
+                          );
+                        }).toList(),
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -555,14 +586,28 @@ class _AdminScreenState extends State<AdminScreen>
             TextButton(onPressed: () => Navigator.pop(ctx2), child: const Text('Cancel')),
             FilledButton(
               onPressed: isLoading ? null : () {
+                // Get names for display
+                String? adminName = _getUserNameByUid(admin);
+                String? managerName = _getUserNameByUid(manager);
+                String? tlName = _getUserNameByUid(tl);
+                String? coordinatorName = _getUserNameByUid(coordinator);
+                List<String> memberNames = _getMemberNamesByUids(selectedMembers);
+
                 setState(() {
                   _mockGroups.add({
                     'id': 'grp_${DateTime.now().millisecondsSinceEpoch}',
                     'name': nameCtrl.text.trim(),
+                    'sub_group_name': subGroupNameCtrl.text.trim(),
                     'admin_uid': admin,
+                    'admin_name': adminName ?? 'N/A',
+                    'sub_group_manager': managerName ?? 'N/A',
                     'manager_uid': manager,
                     'tl_uid': tl,
+                    'tl_name': tlName ?? 'N/A',
+                    'coordinator_uid': coordinator,
+                    'coordinator_name': coordinatorName ?? 'N/A',
                     'members': selectedMembers,
+                    'member_names': memberNames,
                     'status': true,
                     'created_at': DateTime.now(),
                   });
@@ -1263,5 +1308,25 @@ class _AdminScreenState extends State<AdminScreen>
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
     ));
+  }
+
+  /// Helper to get user name by UID from mock or Firestore data
+  String? _getUserNameByUid(String? uid) {
+    if (uid == null) return null;
+
+    // Check mock users first
+    final mockUser = _mockUsers.where((u) => u.uid == uid).firstOrNull;
+    if (mockUser != null) return mockUser.name;
+
+    // Check Firestore users
+    final fsUser = _allUsers.where((u) => (u['uid'] ?? u['id']) == uid).firstOrNull;
+    if (fsUser != null) return (fsUser['name'] ?? fsUser['display_name'] ?? fsUser['email']) as String?;
+
+    return null;
+  }
+
+  /// Get list of member names from UIDs
+  List<String> _getMemberNamesByUids(List<String> uids) {
+    return uids.map((uid) => _getUserNameByUid(uid) ?? uid).toList();
   }
 }

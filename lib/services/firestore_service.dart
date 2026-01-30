@@ -133,6 +133,26 @@ class FirestoreService {
   }
 
   // ---------------------------------------------------------------------------
+  // Users
+  // ---------------------------------------------------------------------------
+
+  /// Fetches all users from the `users` collection as a list of maps.
+  /// Each map includes the document ID under the key `'id'`.
+  Future<List<Map<String, dynamic>>> getAllUsers() async {
+    final snapshot = await _db.collection('users').get();
+    return snapshot.docs.map((doc) {
+      final data = doc.data();
+      data['id'] = doc.id;
+      return data;
+    }).toList();
+  }
+
+  /// Returns a stream of all users.
+  Stream<QuerySnapshot> getUsersStream() {
+    return _db.collection('users').snapshots();
+  }
+
+  // ---------------------------------------------------------------------------
   // Activity Logs
   // ---------------------------------------------------------------------------
 

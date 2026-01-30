@@ -74,6 +74,10 @@ class _PipelineScreenState extends State<PipelineScreen> {
   void initState() {
     super.initState();
     _kanbanScrollController.addListener(_updateScrollIndicators);
+    // Initialize scroll indicators after first frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _updateScrollIndicators();
+    });
   }
 
   void _updateScrollIndicators() {
@@ -512,42 +516,47 @@ class _PipelineScreenState extends State<PipelineScreen> {
 
     return Column(
       children: [
-        // Sort options row
+        // Sort options row - made scrollable for mobile
         Container(
           color: Colors.white,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: Row(
-            children: [
-              const Text('Sort by: ', style: TextStyle(fontWeight: FontWeight.w500)),
-              const SizedBox(width: 8),
-              DropdownButton<SortField>(
-                value: _sortField,
-                underline: const SizedBox(),
-                items: const [
-                  DropdownMenuItem(value: SortField.createdAt, child: Text('Created Date')),
-                  DropdownMenuItem(value: SortField.name, child: Text('Name')),
-                  DropdownMenuItem(value: SortField.rating, child: Text('Rating')),
-                  DropdownMenuItem(value: SortField.stage, child: Text('Stage')),
-                  DropdownMenuItem(value: SortField.health, child: Text('Health')),
-                ],
-                onChanged: (v) => setState(() => _sortField = v ?? SortField.createdAt),
-              ),
-              const SizedBox(width: 16),
-              IconButton(
-                icon: Icon(
-                  _sortOrder == SortOrder.desc ? Icons.arrow_downward : Icons.arrow_upward,
-                  size: 20,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                const Text('Sort by: ', style: TextStyle(fontWeight: FontWeight.w500)),
+                const SizedBox(width: 8),
+                DropdownButton<SortField>(
+                  value: _sortField,
+                  underline: const SizedBox(),
+                  isDense: true,
+                  items: const [
+                    DropdownMenuItem(value: SortField.createdAt, child: Text('Created')),
+                    DropdownMenuItem(value: SortField.name, child: Text('Name')),
+                    DropdownMenuItem(value: SortField.rating, child: Text('Rating')),
+                    DropdownMenuItem(value: SortField.stage, child: Text('Stage')),
+                    DropdownMenuItem(value: SortField.health, child: Text('Health')),
+                  ],
+                  onChanged: (v) => setState(() => _sortField = v ?? SortField.createdAt),
                 ),
-                tooltip: _sortOrder == SortOrder.desc ? 'Newest first' : 'Oldest first',
-                onPressed: () => setState(() {
-                  _sortOrder = _sortOrder == SortOrder.desc ? SortOrder.asc : SortOrder.desc;
-                }),
-              ),
-              Text(
-                _sortOrder == SortOrder.desc ? 'Newest first' : 'Oldest first',
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-              ),
-            ],
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: Icon(
+                    _sortOrder == SortOrder.desc ? Icons.arrow_downward : Icons.arrow_upward,
+                    size: 18,
+                  ),
+                  tooltip: _sortOrder == SortOrder.desc ? 'Newest first' : 'Oldest first',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => setState(() {
+                    _sortOrder = _sortOrder == SortOrder.desc ? SortOrder.asc : SortOrder.desc;
+                  }),
+                ),
+                Text(
+                  _sortOrder == SortOrder.desc ? 'Newest' : 'Oldest',
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                ),
+              ],
+            ),
           ),
         ),
         const Divider(height: 1),
@@ -555,8 +564,8 @@ class _PipelineScreenState extends State<PipelineScreen> {
         Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) {
-              // Calculate total min width: Name(120) + Business(120) + 8 other cols(80 each) = 880
-              const minTableWidth = 880.0;
+              // Minimum table width to prevent column overlap
+              const minTableWidth = 900.0;
               final tableWidth = constraints.maxWidth < minTableWidth
                   ? minTableWidth
                   : constraints.maxWidth;
@@ -1054,40 +1063,51 @@ class _PipelineScreenState extends State<PipelineScreen> {
                 ),
               ),
               const Divider(height: 1),
-              // Lead cards list with scrollbar
+              // Lead cards list with scrollbar - improved for mobile
               Flexible(
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxHeight: MediaQuery.of(context).size.height - 250,
-                    minHeight: 100,
-                  ),
-                  child: stageLeads.isEmpty
-                    ? Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Center(
-                          child: Text(
-                            'No leads',
-                            style: TextStyle(
-                              color: Colors.grey.shade400,
-                              fontSize: 13,
-                              fontStyle: FontStyle.italic,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    // Calculate max height based on screen - more generous on mobile
+                    final screenHeight = MediaQuery.of(context).size.height;
+                    final isMobile = MediaQuery.of(context).size.width < 600;
+                    final maxHeight = isMobile
+                        ? screenHeight * 0.6  // 60% of screen on mobile
+                        : screenHeight - 250;
+
+                    return ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: maxHeight,
+                        minHeight: 100,
+                      ),
+                      child: stageLeads.isEmpty
+                        ? Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Center(
+                              child: Text(
+                                'No leads',
+                                style: TextStyle(
+                                  color: Colors.grey.shade400,
+                                  fontSize: 13,
+                                  fontStyle: FontStyle.italic,
+                                ),
+                              ),
+                            ),
+                          )
+                        : Scrollbar(
+                            thumbVisibility: true,
+                            child: ListView.builder(
+                              shrinkWrap: false, // Allow expansion on mobile
+                              physics: const BouncingScrollPhysics(), // Better mobile feel
+                              padding: const EdgeInsets.symmetric(
+                                  vertical: 8, horizontal: 8),
+                              itemCount: stageLeads.length,
+                              itemBuilder: (context, index) {
+                                return _buildLeadCard(stageLeads[index], color);
+                              },
                             ),
                           ),
-                        ),
-                      )
-                    : Scrollbar(
-                        thumbVisibility: true,
-                        child: ListView.builder(
-                          shrinkWrap: true,
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          padding: const EdgeInsets.symmetric(
-                              vertical: 8, horizontal: 8),
-                          itemCount: stageLeads.length,
-                          itemBuilder: (context, index) {
-                            return _buildLeadCard(stageLeads[index], color);
-                          },
-                        ),
-                      ),
+                    );
+                  },
                 ),
               ),
             ],

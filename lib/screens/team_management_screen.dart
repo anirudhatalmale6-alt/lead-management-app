@@ -22,17 +22,20 @@ class _TeamManagementScreenState extends State<TeamManagementScreen>
   // Mock data
   // ---------------------------------------------------------------------------
 
-  final List<Map<String, dynamic>> _mockManagers = [
+  List<Map<String, dynamic>> _mockManagers = [
     {'uid': 'm1', 'name': 'Alice Johnson'},
     {'uid': 'm2', 'name': 'Carol Davis'},
     {'uid': 'm3', 'name': 'George Lee'},
   ];
 
-  final List<Map<String, dynamic>> _mockTeamLeads = [
+  List<Map<String, dynamic>> _mockTeamLeads = [
     {'uid': 'tl1', 'name': 'Dan Wilson'},
     {'uid': 'tl2', 'name': 'Hana Patel'},
     {'uid': 'tl3', 'name': 'Ivan Chen'},
   ];
+
+  // Firebase loaded users
+  List<Map<String, dynamic>> _firestoreUsers = [];
 
   late List<Map<String, dynamic>> _mockTeams;
   late List<Map<String, dynamic>> _mockGroups;
@@ -44,6 +47,7 @@ class _TeamManagementScreenState extends State<TeamManagementScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _loadUsersFromFirestore();
 
     _mockTeams = [
       {
@@ -120,6 +124,59 @@ class _TeamManagementScreenState extends State<TeamManagementScreen>
   void dispose() {
     _tabController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadUsersFromFirestore() async {
+    if (_useMockData) return;
+    try {
+      final users = await _firestoreService.getAllUsers();
+      if (mounted) {
+        setState(() {
+          _firestoreUsers = users;
+          // Update managers and team leads lists from Firestore users
+          _mockManagers = users
+              .where((u) =>
+                  u['role'] == 'manager' ||
+                  u['role'] == 'admin' ||
+                  u['role'] == 'super_admin')
+              .map((u) => {
+                    'uid': u['uid'] ?? u['id'] ?? '',
+                    'name': u['name'] ?? u['email'] ?? 'Unknown',
+                  })
+              .toList();
+          _mockTeamLeads = users
+              .where((u) =>
+                  u['role'] == 'team_lead' ||
+                  u['role'] == 'coordinator' ||
+                  u['role'] == 'manager' ||
+                  u['role'] == 'admin')
+              .map((u) => {
+                    'uid': u['uid'] ?? u['id'] ?? '',
+                    'name': u['name'] ?? u['email'] ?? 'Unknown',
+                  })
+              .toList();
+          // If no managers/leads found, use all users
+          if (_mockManagers.isEmpty) {
+            _mockManagers = users
+                .map((u) => {
+                      'uid': u['uid'] ?? u['id'] ?? '',
+                      'name': u['name'] ?? u['email'] ?? 'Unknown',
+                    })
+                .toList();
+          }
+          if (_mockTeamLeads.isEmpty) {
+            _mockTeamLeads = users
+                .map((u) => {
+                      'uid': u['uid'] ?? u['id'] ?? '',
+                      'name': u['name'] ?? u['email'] ?? 'Unknown',
+                    })
+                .toList();
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading users: $e');
+    }
   }
 
   // ---------------------------------------------------------------------------

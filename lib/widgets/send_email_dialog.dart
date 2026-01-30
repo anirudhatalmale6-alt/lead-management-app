@@ -130,14 +130,13 @@ class _SendEmailDialogState extends State<SendEmailDialog> {
     return Dialog(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 600, maxHeight: 700),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Header
-              Row(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header - Fixed at top
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+              child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   const Text(
@@ -150,143 +149,158 @@ class _SendEmailDialogState extends State<SendEmailDialog> {
                   ),
                 ],
               ),
-              const Divider(),
-              // Lead info
-              Card(
-                color: Colors.grey.shade100,
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.person, color: Colors.blue),
-                      const SizedBox(width: 12),
-                      Expanded(
+            ),
+            const Divider(),
+            // Scrollable content
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Lead info
+                    Card(
+                      color: Colors.grey.shade100,
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.person, color: Colors.blue),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    widget.lead.clientName,
+                                    style: const TextStyle(fontWeight: FontWeight.bold),
+                                  ),
+                                  Text(
+                                    widget.lead.clientEmail.isEmpty
+                                        ? 'No email address'
+                                        : widget.lead.clientEmail,
+                                    style: TextStyle(
+                                      color: widget.lead.clientEmail.isEmpty
+                                          ? Colors.red
+                                          : Colors.grey[600],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    // Category selector
+                    if (_categories.isEmpty)
+                      const Card(
+                        color: Colors.orange,
+                        child: Padding(
+                          padding: EdgeInsets.all(12),
+                          child: Text(
+                            'No business categories configured. Go to Email Settings to add categories and templates.',
+                            style: TextStyle(color: Colors.white),
+                          ),
+                        ),
+                      )
+                    else ...[
+                      DropdownButtonFormField<String>(
+                        value: _selectedCategoryId,
+                        decoration: const InputDecoration(
+                          labelText: 'Business Category',
+                          prefixIcon: Icon(Icons.category),
+                        ),
+                        items: _categories
+                            .map((c) => DropdownMenuItem(
+                                  value: c.id,
+                                  child: Text(c.name),
+                                ))
+                            .toList(),
+                        onChanged: (v) {
+                          setState(() => _selectedCategoryId = v);
+                          if (v != null) _loadTemplates(v);
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      // Template buttons
+                      const Text(
+                        'Select Template:',
+                        style: TextStyle(fontWeight: FontWeight.w500),
+                      ),
+                      const SizedBox(height: 8),
+                      if (_templates.isEmpty)
+                        const Text(
+                          'No templates for this category.',
+                          style: TextStyle(color: Colors.grey),
+                        )
+                      else
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: _templates.map((tpl) {
+                            final isSelected = _selectedTemplate?.id == tpl.id;
+                            return ChoiceChip(
+                              label: Text(tpl.type.label),
+                              selected: isSelected,
+                              onSelected: (_) => _selectTemplate(tpl),
+                              avatar: Icon(
+                                _getTemplateIcon(tpl.type),
+                                size: 18,
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                    ],
+                    // Preview
+                    if (_previewSubject != null) ...[
+                      const SizedBox(height: 16),
+                      const Divider(),
+                      const Text(
+                        'Preview:',
+                        style: TextStyle(fontWeight: FontWeight.w500),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey.shade300),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              widget.lead.clientName,
-                              style: const TextStyle(fontWeight: FontWeight.bold),
+                            Row(
+                              children: [
+                                const Text(
+                                  'Subject: ',
+                                  style: TextStyle(fontWeight: FontWeight.bold),
+                                ),
+                                Expanded(child: Text(_previewSubject!)),
+                              ],
                             ),
-                            Text(
-                              widget.lead.clientEmail.isEmpty
-                                  ? 'No email address'
-                                  : widget.lead.clientEmail,
-                              style: TextStyle(
-                                color: widget.lead.clientEmail.isEmpty
-                                    ? Colors.red
-                                    : Colors.grey[600],
+                            const Divider(),
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxHeight: 150),
+                              child: SingleChildScrollView(
+                                child: Text(_previewBody ?? ''),
                               ),
                             ),
                           ],
                         ),
                       ),
                     ],
-                  ),
+                    const SizedBox(height: 16),
+                  ],
                 ),
               ),
-              const SizedBox(height: 16),
-              // Category selector
-              if (_categories.isEmpty)
-                const Card(
-                  color: Colors.orange,
-                  child: Padding(
-                    padding: EdgeInsets.all(12),
-                    child: Text(
-                      'No business categories configured. Go to Email Settings to add categories and templates.',
-                      style: TextStyle(color: Colors.white),
-                    ),
-                  ),
-                )
-              else ...[
-                DropdownButtonFormField<String>(
-                  value: _selectedCategoryId,
-                  decoration: const InputDecoration(
-                    labelText: 'Business Category',
-                    prefixIcon: Icon(Icons.category),
-                  ),
-                  items: _categories
-                      .map((c) => DropdownMenuItem(
-                            value: c.id,
-                            child: Text(c.name),
-                          ))
-                      .toList(),
-                  onChanged: (v) {
-                    setState(() => _selectedCategoryId = v);
-                    if (v != null) _loadTemplates(v);
-                  },
-                ),
-                const SizedBox(height: 16),
-                // Template buttons
-                const Text(
-                  'Select Template:',
-                  style: TextStyle(fontWeight: FontWeight.w500),
-                ),
-                const SizedBox(height: 8),
-                if (_templates.isEmpty)
-                  const Text(
-                    'No templates for this category.',
-                    style: TextStyle(color: Colors.grey),
-                  )
-                else
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: _templates.map((tpl) {
-                      final isSelected = _selectedTemplate?.id == tpl.id;
-                      return ChoiceChip(
-                        label: Text(tpl.type.label),
-                        selected: isSelected,
-                        onSelected: (_) => _selectTemplate(tpl),
-                        avatar: Icon(
-                          _getTemplateIcon(tpl.type),
-                          size: 18,
-                        ),
-                      );
-                    }).toList(),
-                  ),
-              ],
-              // Preview
-              if (_previewSubject != null) ...[
-                const SizedBox(height: 16),
-                const Divider(),
-                const Text(
-                  'Preview:',
-                  style: TextStyle(fontWeight: FontWeight.w500),
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey.shade300),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Text(
-                            'Subject: ',
-                            style: TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          Expanded(child: Text(_previewSubject!)),
-                        ],
-                      ),
-                      const Divider(),
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(maxHeight: 150),
-                        child: SingleChildScrollView(
-                          child: Text(_previewBody ?? ''),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-              const SizedBox(height: 24),
-              // Send button
-              Row(
+            ),
+            // Send button - Fixed at bottom
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   TextButton(
@@ -312,8 +326,8 @@ class _SendEmailDialogState extends State<SendEmailDialog> {
                   ),
                 ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

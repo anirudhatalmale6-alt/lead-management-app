@@ -9,3 +9,6 @@ ios/.symlinks/
 ios/Pods/
 *.apk
 *.aab
+
+# FVM Version Cache
+.fvm/

@@ -10,6 +10,7 @@ import 'screens/lead_form_screen.dart';
 import 'screens/lead_detail_screen.dart';
 import 'screens/user_management_screen.dart';
 import 'screens/team_management_screen.dart';
+import 'screens/admin_screen.dart';
 import 'screens/email_settings_screen.dart';
 import 'screens/calendar_screen.dart';
 import 'screens/calendar_settings_screen.dart';
@@ -337,8 +338,7 @@ class _AppRootState extends State<AppRoot> {
 
     if (_isAdmin) {
       screens.addAll([
-        const UserManagementScreen(),
-        const TeamManagementScreen(),
+        const AdminScreen(),  // Combined Team, Group, Role, User management
         const EmailSettingsScreen(),
         CalendarSettingsScreen(currentUser: _currentUser!),
       ]);

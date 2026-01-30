@@ -271,6 +271,82 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int get _totalPending =>
       leads.where((l) => l.paymentStatus == PaymentStatus.pending).length;
 
+  // Additional KPI metrics for new dashboard
+  int get _leadsAddedToday => leads.where((l) => _isToday(l.createdAt)).length;
+
+  int get _workingLeads =>
+      leads.where((l) => l.activityState == ActivityState.working).length;
+
+  int get _junkLeads =>
+      leads.where((l) => l.health == LeadHealth.junk).length;
+
+  int get _reopenedLeads =>
+      leads.where((l) => l.activityState == ActivityState.reOpened).length;
+
+  // Hot leads (high rating, hot health, not won/lost)
+  List<Lead> get _hotLeads => leads
+      .where((l) =>
+          l.health == LeadHealth.hot &&
+          l.rating >= 70 &&
+          l.stage != LeadStage.won &&
+          l.stage != LeadStage.lost)
+      .toList()
+    ..sort((a, b) => b.rating.compareTo(a.rating));
+
+  // Today's tasks (follow-ups and meetings due today)
+  List<Lead> get _todaysTasks {
+    final now = DateTime.now();
+    return leads.where((l) {
+      final hasFollowUp = l.nextFollowUpDate != null && _isToday(l.nextFollowUpDate!);
+      final hasMeeting = l.meetingDate != null && _isToday(l.meetingDate!);
+      return hasFollowUp || hasMeeting;
+    }).toList()
+      ..sort((a, b) {
+        final aTime = a.nextFollowUpDate ?? a.meetingDate ?? now;
+        final bTime = b.nextFollowUpDate ?? b.meetingDate ?? now;
+        return aTime.compareTo(bTime);
+      });
+  }
+
+  // Upcoming activities (next 7 days)
+  List<Lead> get _upcomingActivities {
+    final now = DateTime.now();
+    final weekLater = now.add(const Duration(days: 7));
+    return leads.where((l) {
+      if (l.nextFollowUpDate != null) {
+        return l.nextFollowUpDate!.isAfter(now) && l.nextFollowUpDate!.isBefore(weekLater);
+      }
+      if (l.meetingDate != null) {
+        return l.meetingDate!.isAfter(now) && l.meetingDate!.isBefore(weekLater);
+      }
+      return false;
+    }).toList()
+      ..sort((a, b) {
+        final aDate = a.nextFollowUpDate ?? a.meetingDate ?? now;
+        final bDate = b.nextFollowUpDate ?? b.meetingDate ?? now;
+        return aDate.compareTo(bDate);
+      });
+  }
+
+  // Missed/Overdue activities
+  List<Lead> get _missedActivities {
+    final now = DateTime.now();
+    return leads.where((l) {
+      if (l.nextFollowUpDate != null && l.nextFollowUpDate!.isBefore(now) && !_isToday(l.nextFollowUpDate!)) {
+        return l.stage != LeadStage.won && l.stage != LeadStage.lost;
+      }
+      if (l.meetingDate != null && l.meetingDate!.isBefore(now) && !_isToday(l.meetingDate!)) {
+        return l.stage != LeadStage.won && l.stage != LeadStage.lost;
+      }
+      return false;
+    }).toList()
+      ..sort((a, b) {
+        final aDate = a.nextFollowUpDate ?? a.meetingDate ?? now;
+        final bDate = b.nextFollowUpDate ?? b.meetingDate ?? now;
+        return aDate.compareTo(bDate);
+      });
+  }
+
   // ---------------------------------------------------------------------------
   // Computed data — Breakdowns
   // ---------------------------------------------------------------------------
@@ -569,27 +645,631 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildSummaryCards(context),
+          // 1. KPI Summary Cards
+          _buildKPISummaryCards(context),
           const SizedBox(height: 16),
+          // 2. Today's Summary
           _buildTodaysSummaryCard(),
+          const SizedBox(height: 16),
+          // 3. Missed Activity Alert Box (if any)
+          if (_missedActivities.isNotEmpty) ...[
+            _buildMissedActivityAlertBox(),
+            const SizedBox(height: 16),
+          ],
+          // 4. Live Activity Panel (side by side on wide screens)
+          _buildActivityPanels(),
           const SizedBox(height: 24),
+          // 5. Pipeline Charts
           _buildChartsRow(context),
           const SizedBox(height: 24),
+          // 6. Hot Leads List
+          if (_hotLeads.isNotEmpty) ...[
+            _buildHotLeadsList(),
+            const SizedBox(height: 24),
+          ],
+          // 7. Activity State Breakdown
           _buildSectionTitle('Activity State Breakdown'),
           const SizedBox(height: 8),
           _buildActivityStateCards(),
           const SizedBox(height: 24),
+          // 8. Payment Status Breakdown
           _buildSectionTitle('Payment Status Breakdown'),
           const SizedBox(height: 8),
           _buildPaymentStatusCards(),
           const SizedBox(height: 24),
+          // 9. Product/Service Breakdown
           _buildProductServiceCard(context),
           const SizedBox(height: 24),
+          // 10. Rating Distribution
           _buildSectionTitle('Rating Distribution'),
           const SizedBox(height: 8),
           _buildRatingCards(),
           const SizedBox(height: 24),
+          // 11. Meeting Statistics
           _buildMeetingStatsCard(),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // NEW: KPI Summary Cards (Clickable)
+  // ---------------------------------------------------------------------------
+
+  Widget _buildKPISummaryCards(BuildContext context) {
+    final cards = <_SummaryCardData>[
+      _SummaryCardData(
+        icon: Icons.people,
+        color: Colors.indigo,
+        value: '$_totalLeads',
+        label: 'My Total Leads',
+      ),
+      _SummaryCardData(
+        icon: Icons.add_circle,
+        color: Colors.blue,
+        value: '$_leadsAddedToday',
+        label: 'Leads Added Today',
+      ),
+      _SummaryCardData(
+        icon: Icons.work,
+        color: Colors.teal,
+        value: '$_workingLeads',
+        label: 'Working Leads',
+      ),
+      _SummaryCardData(
+        icon: Icons.emoji_events,
+        color: Colors.green,
+        value: '$_totalWon',
+        label: 'Won Leads',
+      ),
+      _SummaryCardData(
+        icon: Icons.cancel,
+        color: Colors.red.shade400,
+        value: '$_totalLost',
+        label: 'Lost Leads',
+      ),
+      _SummaryCardData(
+        icon: Icons.delete,
+        color: Colors.brown,
+        value: '$_junkLeads',
+        label: 'Junk Leads',
+      ),
+      _SummaryCardData(
+        icon: Icons.refresh,
+        color: Colors.purple,
+        value: '$_reopenedLeads',
+        label: 'Reopened Leads',
+      ),
+    ];
+
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      children: cards.map((data) => _buildClickableKPICard(context, data)).toList(),
+    );
+  }
+
+  Widget _buildClickableKPICard(BuildContext context, _SummaryCardData data) {
+    return SizedBox(
+      width: 150,
+      child: Card(
+        elevation: 2,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () {
+            // Navigate to filtered lead list based on card type
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Showing ${data.label}: ${data.value}'),
+                duration: const Duration(seconds: 1),
+              ),
+            );
+          },
+          child: Container(
+            decoration: BoxDecoration(
+              border: Border(left: BorderSide(color: data.color, width: 4)),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(data.icon, color: data.color, size: 24),
+                const SizedBox(height: 8),
+                Text(
+                  data.value,
+                  style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  data.label,
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // NEW: Missed Activity Alert Box (RED)
+  // ---------------------------------------------------------------------------
+
+  Widget _buildMissedActivityAlertBox() {
+    final missed = _missedActivities.take(5).toList();
+    final totalMissed = _missedActivities.length;
+
+    return Card(
+      elevation: 3,
+      color: Colors.red.shade50,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: Colors.red.shade300, width: 2),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.warning_amber_rounded, color: Colors.red.shade700, size: 28),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Missed Activities ($totalMissed)',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.red.shade700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ...missed.map((lead) => _buildMissedActivityRow(lead)),
+            if (totalMissed > 5)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  '+ ${totalMissed - 5} more overdue activities',
+                  style: TextStyle(
+                    color: Colors.red.shade600,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMissedActivityRow(Lead lead) {
+    final dueDate = lead.nextFollowUpDate ?? lead.meetingDate;
+    final activityType = lead.nextFollowUpDate != null ? 'Follow-up' : 'Meeting';
+    final delay = dueDate != null
+        ? DateTime.now().difference(dueDate).inDays
+        : 0;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.red.shade200),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            activityType == 'Follow-up' ? Icons.phone_callback : Icons.videocam,
+            color: Colors.red.shade400,
+            size: 20,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  lead.clientName,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  '$activityType - ${dueDate != null ? DateFormat('dd MMM').format(dueDate) : 'N/A'}',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.red.shade100,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              '$delay days late',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: Colors.red.shade700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // NEW: Activity Panels (Today's Tasks + Upcoming)
+  // ---------------------------------------------------------------------------
+
+  Widget _buildActivityPanels() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth >= 800;
+        if (isWide) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: _buildTodaysTaskList()),
+              const SizedBox(width: 16),
+              Expanded(child: _buildUpcomingActivitiesPanel()),
+            ],
+          );
+        } else {
+          return Column(
+            children: [
+              _buildTodaysTaskList(),
+              const SizedBox(height: 16),
+              _buildUpcomingActivitiesPanel(),
+            ],
+          );
+        }
+      },
+    );
+  }
+
+  Widget _buildTodaysTaskList() {
+    final tasks = _todaysTasks.take(5).toList();
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.checklist, color: Colors.blue.shade700),
+                const SizedBox(width: 8),
+                const Text(
+                  "Today's Tasks",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade100,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${_todaysTasks.length}',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.blue.shade700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (tasks.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Center(
+                  child: Column(
+                    children: [
+                      Icon(Icons.check_circle_outline, size: 48, color: Colors.green.shade300),
+                      const SizedBox(height: 8),
+                      Text(
+                        'No tasks for today!',
+                        style: TextStyle(color: Colors.grey.shade600),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              ...tasks.map((lead) => _buildTaskRow(lead)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTaskRow(Lead lead) {
+    final hasFollowUp = lead.nextFollowUpDate != null && _isToday(lead.nextFollowUpDate!);
+    final hasMeeting = lead.meetingDate != null && _isToday(lead.meetingDate!);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: _healthColor(lead.health),
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  lead.clientName,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                Row(
+                  children: [
+                    if (hasFollowUp) ...[
+                      Icon(Icons.phone_callback, size: 12, color: Colors.orange.shade700),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Follow-up ${lead.nextFollowUpTime}',
+                        style: TextStyle(fontSize: 11, color: Colors.orange.shade700),
+                      ),
+                    ],
+                    if (hasFollowUp && hasMeeting) const SizedBox(width: 8),
+                    if (hasMeeting) ...[
+                      Icon(Icons.videocam, size: 12, color: Colors.blue.shade700),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Meeting ${lead.meetingTime}',
+                        style: TextStyle(fontSize: 11, color: Colors.blue.shade700),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUpcomingActivitiesPanel() {
+    final upcoming = _upcomingActivities.take(5).toList();
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.schedule, color: Colors.teal.shade700),
+                const SizedBox(width: 8),
+                const Text(
+                  'Upcoming Activities',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.teal.shade100,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${_upcomingActivities.length}',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.teal.shade700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (upcoming.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Center(
+                  child: Column(
+                    children: [
+                      Icon(Icons.event_available, size: 48, color: Colors.grey.shade300),
+                      const SizedBox(height: 8),
+                      Text(
+                        'No upcoming activities',
+                        style: TextStyle(color: Colors.grey.shade600),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              ...upcoming.map((lead) => _buildUpcomingRow(lead)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildUpcomingRow(Lead lead) {
+    final date = lead.nextFollowUpDate ?? lead.meetingDate;
+    final type = lead.nextFollowUpDate != null ? 'Follow-up' : 'Meeting';
+    final isFollowUp = lead.nextFollowUpDate != null;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            isFollowUp ? Icons.phone_callback : Icons.videocam,
+            size: 20,
+            color: isFollowUp ? Colors.orange : Colors.blue,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  lead.clientName,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                Text(
+                  '$type - ${date != null ? DateFormat('dd MMM, HH:mm').format(date) : 'N/A'}',
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: _healthColor(lead.health),
+              shape: BoxShape.circle,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // NEW: Hot Leads List
+  // ---------------------------------------------------------------------------
+
+  Widget _buildHotLeadsList() {
+    final hotLeads = _hotLeads.take(5).toList();
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          gradient: LinearGradient(
+            colors: [Colors.red.shade400, Colors.orange.shade400],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.local_fire_department, color: Colors.white, size: 28),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Hot Leads',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '${_hotLeads.length}',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              ...hotLeads.map((lead) => _buildHotLeadRow(lead)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHotLeadRow(Lead lead) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.9),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.person, size: 20, color: Colors.red),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  lead.clientName,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  '${lead.stage.label} - ${lead.clientCity.isNotEmpty ? lead.clientCity : "N/A"}',
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.orange.shade100,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              'Rating: ${lead.rating}',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: Colors.orange.shade800,
+              ),
+            ),
+          ),
         ],
       ),
     );
