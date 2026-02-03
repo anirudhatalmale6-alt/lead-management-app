@@ -15,11 +15,26 @@ class CalendarService {
   // Get all meetings
   Future<List<Meeting>> getAllMeetings() async {
     try {
+      // Try with orderBy first
       final snapshot =
           await _meetingsRef.orderBy('start_time', descending: false).get();
-      return snapshot.docs.map((doc) => Meeting.fromFirestore(doc)).toList();
+      final meetings = snapshot.docs.map((doc) => Meeting.fromFirestore(doc)).toList();
+      debugPrint('CalendarService: Loaded ${meetings.length} meetings from Firestore');
+      return meetings;
     } catch (e) {
-      return [];
+      debugPrint('CalendarService: orderBy failed, trying without: $e');
+      try {
+        // Fallback: get without orderBy (no index needed)
+        final snapshot = await _meetingsRef.get();
+        final meetings = snapshot.docs.map((doc) => Meeting.fromFirestore(doc)).toList();
+        // Sort in memory
+        meetings.sort((a, b) => a.startTime.compareTo(b.startTime));
+        debugPrint('CalendarService: Loaded ${meetings.length} meetings (fallback)');
+        return meetings;
+      } catch (e2) {
+        debugPrint('CalendarService: Error loading meetings: $e2');
+        return [];
+      }
     }
   }
 

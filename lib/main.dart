@@ -336,9 +336,11 @@ class _AppRootState extends State<AppRoot> {
     // Calendar screen (available to all users)
     screens.add(CalendarScreen(currentUser: _currentUser!));
 
+    // Admin screen visible to all roles - view-only for non-admin users
+    screens.add(AdminScreen(currentUser: _currentUser!));
+
     if (_isAdmin) {
       screens.addAll([
-        const AdminScreen(),  // Combined Team, Group, Role, User management
         const EmailSettingsScreen(),
         CalendarSettingsScreen(currentUser: _currentUser!),
       ]);

@@ -134,6 +134,7 @@ class EmailService {
 
   /// Send email using Cloud Function (recommended for production)
   /// This creates an email_queue document that a Cloud Function picks up
+  /// NOTE: Actual email delivery requires SMTP Cloud Function deployment
   Future<EmailLog> sendEmailViaQueue({
     required Lead lead,
     required EmailTemplate template,
@@ -144,8 +145,8 @@ class EmailService {
     final subject = EmailTemplate.replacePlaceholders(template.subject, placeholders);
     final body = EmailTemplate.replacePlaceholders(template.body, placeholders);
 
-    // Create email log - set status to 'sent' immediately for demo
-    // In production, this would be 'pending' and Cloud Function updates to 'sent'
+    // Create email log - set status to 'logged' to show in history
+    // In production with SMTP Cloud Function, status would update to 'sent' after delivery
     final logRef = _firestore.collection('email_logs').doc();
     final log = EmailLog(
       id: logRef.id,
@@ -157,11 +158,11 @@ class EmailService {
       sentByUserId: userId,
       sentByUserName: userName,
       sentAt: DateTime.now(),
-      status: 'sent', // Demo: immediately mark as sent
+      status: 'logged', // Logged in system - requires SMTP config for actual delivery
     );
     await logRef.set(log.toFirestore());
 
-    // Add to email queue (Cloud Function will pick this up)
+    // Add to email queue (Cloud Function will pick this up if deployed)
     await _firestore.collection('email_queue').add({
       'log_id': logRef.id,
       'to_email': lead.clientEmail,

@@ -607,7 +607,7 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
         currentDate: _meetingDate,
         onPicked: (d) => _meetingDate = d,
       ),
-      _buildTextField(
+      _buildTimeField(
         controller: _meetingTimeController,
         label: 'Meeting Time',
       ),
@@ -643,7 +643,7 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
         currentDate: _nextFollowUpDate,
         onPicked: (d) => _nextFollowUpDate = d,
       ),
-      _buildTextField(
+      _buildTimeField(
         controller: _nextFollowUpTimeController,
         label: 'Next Follow-up Time',
       ),
@@ -971,6 +971,60 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
         controller: controller,
         onPicked: onPicked,
       ),
+    );
+  }
+
+  Widget _buildTimeField({
+    required TextEditingController controller,
+    required String label,
+  }) {
+    return TextFormField(
+      controller: controller,
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+        suffixIcon: const Icon(Icons.access_time),
+        hintText: 'Tap to select time',
+      ),
+      readOnly: true,
+      onTap: () async {
+        // Parse existing time if available
+        TimeOfDay initialTime = const TimeOfDay(hour: 10, minute: 0);
+        final existingText = controller.text.trim();
+        if (existingText.isNotEmpty) {
+          try {
+            // Try to parse AM/PM format like "10:30 AM"
+            final parts = existingText.replaceAll(RegExp(r'[APap][Mm]'), '').trim().split(':');
+            if (parts.length == 2) {
+              int hour = int.parse(parts[0].trim());
+              int minute = int.parse(parts[1].trim());
+              if (existingText.toUpperCase().contains('PM') && hour != 12) hour += 12;
+              if (existingText.toUpperCase().contains('AM') && hour == 12) hour = 0;
+              initialTime = TimeOfDay(hour: hour, minute: minute);
+            }
+          } catch (_) {}
+        }
+
+        final picked = await showTimePicker(
+          context: context,
+          initialTime: initialTime,
+          builder: (context, child) {
+            return MediaQuery(
+              data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: false),
+              child: child!,
+            );
+          },
+        );
+        if (picked != null) {
+          // Format as 12-hour with AM/PM
+          final hour = picked.hourOfPeriod == 0 ? 12 : picked.hourOfPeriod;
+          final minute = picked.minute.toString().padLeft(2, '0');
+          final period = picked.period == DayPeriod.am ? 'AM' : 'PM';
+          setState(() {
+            controller.text = '$hour:$minute $period';
+          });
+        }
+      },
     );
   }
 }

@@ -261,17 +261,26 @@ class _PipelineScreenState extends State<PipelineScreen> {
           Container(
             color: Colors.white,
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final isMobile = constraints.maxWidth < 600;
+
+                if (isMobile) {
+                  // Mobile layout: search on top row, controls on bottom row
+                  return Column(
+                    children: [
+                      // Search row
+                      TextField(
                         controller: _searchController,
                         onChanged: (_) => setState(() {}),
+                        style: const TextStyle(
+                          color: Colors.black87,
+                          fontSize: 14,
+                        ),
                         decoration: InputDecoration(
                           hintText: 'Search leads...',
-                          prefixIcon: const Icon(Icons.search, size: 20),
+                          hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 14),
+                          prefixIcon: const Icon(Icons.search, size: 20, color: Colors.grey),
                           suffixIcon: _searchController.text.isNotEmpty
                               ? IconButton(
                                   icon: const Icon(Icons.clear, size: 18),
@@ -282,6 +291,8 @@ class _PipelineScreenState extends State<PipelineScreen> {
                                 )
                               : null,
                           isDense: true,
+                          filled: true,
+                          fillColor: Colors.white,
                           contentPadding: const EdgeInsets.symmetric(
                               vertical: 10, horizontal: 12),
                           border: OutlineInputBorder(
@@ -291,6 +302,124 @@ class _PipelineScreenState extends State<PipelineScreen> {
                           enabledBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(10),
                             borderSide: BorderSide(color: Colors.grey.shade300),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: const BorderSide(color: Colors.blue, width: 1.5),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      // Controls row
+                      Row(
+                        children: [
+                          Expanded(
+                            child: SegmentedButton<PipelineViewType>(
+                              segments: const [
+                                ButtonSegment(
+                                  value: PipelineViewType.kanban,
+                                  icon: Icon(Icons.view_kanban, size: 18),
+                                  label: Text('Kanban'),
+                                ),
+                                ButtonSegment(
+                                  value: PipelineViewType.table,
+                                  icon: Icon(Icons.table_chart, size: 18),
+                                  label: Text('Table'),
+                                ),
+                              ],
+                              selected: {_viewType},
+                              onSelectionChanged: (selection) {
+                                setState(() => _viewType = selection.first);
+                              },
+                              style: const ButtonStyle(
+                                visualDensity: VisualDensity.compact,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Badge(
+                            isLabelVisible: _hasActiveFilters,
+                            smallSize: 8,
+                            child: IconButton(
+                              icon: Icon(
+                                _showFilters
+                                    ? Icons.filter_list_off
+                                    : Icons.filter_list,
+                                color: _hasActiveFilters
+                                    ? Theme.of(context).colorScheme.primary
+                                    : null,
+                              ),
+                              tooltip: 'Toggle filters',
+                              onPressed: () =>
+                                  setState(() => _showFilters = !_showFilters),
+                            ),
+                          ),
+                          if (_hasActiveFilters)
+                            TextButton.icon(
+                              icon: Icon(Icons.clear, size: 16, color: Colors.red.shade400),
+                              label: Text('Clear', style: TextStyle(color: Colors.red.shade400)),
+                              onPressed: _clearFilters,
+                            ),
+                        ],
+                      ),
+                      if (_hasActiveFilters)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            'Showing $filteredCount of $totalCount leads',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade600,
+                              fontStyle: FontStyle.italic,
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                }
+
+                // Desktop layout: everything in one row
+                return Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _searchController,
+                        onChanged: (_) => setState(() {}),
+                        style: const TextStyle(
+                          color: Colors.black87,
+                          fontSize: 14,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: 'Search leads...',
+                          hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 14),
+                          prefixIcon: const Icon(Icons.search, size: 20, color: Colors.grey),
+                          suffixIcon: _searchController.text.isNotEmpty
+                              ? IconButton(
+                                  icon: const Icon(Icons.clear, size: 18),
+                                  onPressed: () {
+                                    _searchController.clear();
+                                    setState(() {});
+                                  },
+                                )
+                              : null,
+                          isDense: true,
+                          filled: true,
+                          fillColor: Colors.white,
+                          contentPadding: const EdgeInsets.symmetric(
+                              vertical: 10, horizontal: 12),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: BorderSide(color: Colors.grey.shade300),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: BorderSide(color: Colors.grey.shade300),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: const BorderSide(color: Colors.blue, width: 1.5),
                           ),
                         ),
                       ),
@@ -363,6 +492,8 @@ class _PipelineScreenState extends State<PipelineScreen> {
                     ),
                   ),
               ],
+                );
+              },
             ),
           ),
           // Filter panel (expandable)
@@ -1521,6 +1652,54 @@ class _PipelineScreenState extends State<PipelineScreen> {
                 _buildBadge(paymentLabel, paymentColor),
               ],
             ),
+            if (!isDragging) ...[
+              const SizedBox(height: 6),
+              // Follow-up Due badge
+              if (lead.nextFollowUpDate != null) ...[
+                _buildBadge(
+                  'Follow-up Due',
+                  lead.nextFollowUpDate!.isBefore(DateTime.now()) ? Colors.red : Colors.orange,
+                ),
+                const SizedBox(height: 4),
+              ],
+              // "Move to" stage selector for moving card to non-visible columns
+              SizedBox(
+                height: 28,
+                child: PopupMenuButton<LeadStage>(
+                  padding: EdgeInsets.zero,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: Colors.blue.shade200, width: 0.5),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.swap_horiz, size: 14, color: Colors.blue.shade700),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Move',
+                          style: TextStyle(fontSize: 11, color: Colors.blue.shade700, fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
+                  ),
+                  itemBuilder: (ctx) => LeadStage.values
+                      .where((s) => s != lead.stage)
+                      .map((s) => PopupMenuItem<LeadStage>(
+                            value: s,
+                            height: 36,
+                            child: Text(s.label, style: const TextStyle(fontSize: 13)),
+                          ))
+                      .toList(),
+                  onSelected: (newStage) {
+                    widget.onStageChanged(lead, newStage);
+                  },
+                ),
+              ),
+            ],
             const SizedBox(height: 8),
             // Timestamps
             Row(

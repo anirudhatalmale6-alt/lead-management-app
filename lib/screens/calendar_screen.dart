@@ -75,6 +75,37 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   List<Meeting> get _filteredMeetings {
     var results = _meetings;
+
+    // CALENDAR PERMISSION: Members/Emp only see their own meetings
+    // Managers, TL, Admin, Super Admin can see all based on scope setting
+    final userRole = widget.currentUser.role;
+    final isRestrictedUser = userRole == UserRole.member || userRole == UserRole.coordinator;
+
+    if (isRestrictedUser) {
+      // Members and Coordinators only see their own meetings
+      results = results.where((m) {
+        // Check if user created the meeting or is a guest
+        final isOrganizer = m.organizerUid == widget.currentUser.uid;
+        final isGuest = m.guests.any((g) => g.email == widget.currentUser.email);
+        final isAssigned = m.assignedTo == widget.currentUser.uid;
+        return isOrganizer || isGuest || isAssigned;
+      }).toList();
+    } else {
+      // For managers and above, filter based on scope setting
+      if (_calendarScope == 'my') {
+        results = results.where((m) {
+          final isOrganizer = m.organizerUid == widget.currentUser.uid;
+          final isGuest = m.guests.any((g) => g.email == widget.currentUser.email);
+          final isAssigned = m.assignedTo == widget.currentUser.uid;
+          return isOrganizer || isGuest || isAssigned;
+        }).toList();
+      } else if (_calendarScope == 'team') {
+        // Show team members' meetings (would need team data)
+        // For now show all - in production filter by team
+      }
+      // 'all' scope shows everything
+    }
+
     if (_filterPartyName != null && _filterPartyName!.isNotEmpty) {
       final query = _filterPartyName!.toLowerCase();
       results = results.where((m) {
@@ -1073,12 +1104,13 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           fontSize: 14,
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      TextButton.icon(
-                        onPressed: () =>
-                            _openScheduleDialog(preselectedDate: _selectedDate),
-                        icon: const Icon(Icons.add, size: 18),
-                        label: const Text('Add Meeting'),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Use + button to add',
+                        style: TextStyle(
+                          color: Colors.grey.shade400,
+                          fontSize: 12,
+                        ),
                       ),
                     ],
                   ),

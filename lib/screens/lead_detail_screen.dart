@@ -113,6 +113,15 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
       ));
     }
 
+    // Add meetings to timeline
+    for (final meeting in _meetings) {
+      _combinedTimeline.add(_TimelineEntry(
+        type: _TimelineType.meeting,
+        timestamp: meeting.createdAt,
+        meeting: meeting,
+      ));
+    }
+
     // Sort by timestamp descending (most recent first)
     _combinedTimeline.sort((a, b) => b.timestamp.compareTo(a.timestamp));
   }
@@ -124,6 +133,7 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
         setState(() {
           _meetings = meetings;
           _loadingMeetings = false;
+          _buildCombinedTimeline(); // Rebuild timeline to include meetings
         });
       }
     } catch (e) {
@@ -874,7 +884,7 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
   // ---------------------------------------------------------------------------
 
   Widget _buildHistoryTab(ColorScheme cs) {
-    if (_loadingHistory || _loadingEmails) {
+    if (_loadingHistory || _loadingEmails || _loadingMeetings) {
       return const Center(child: CircularProgressIndicator());
     }
     if (_combinedTimeline.isEmpty) {
@@ -914,8 +924,10 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
 
         if (entry.type == _TimelineType.history) {
           return _buildTimelineItem(entry.historyEntry!, cs, isFirst, isLast);
-        } else {
+        } else if (entry.type == _TimelineType.email) {
           return _buildEmailTimelineItem(entry.emailLog!, cs, isFirst, isLast);
+        } else {
+          return _buildMeetingTimelineItem(entry.meeting!, cs, isFirst, isLast);
         }
       },
     );
@@ -1168,6 +1180,207 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
                               ),
                             ),
                           ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMeetingTimelineItem(Meeting meeting, ColorScheme cs, bool isFirst, bool isLast) {
+    final dateStr = DateFormat('dd MMM yyyy').format(meeting.startTime);
+    final timeStr = DateFormat('hh:mm a').format(meeting.startTime);
+    final endTimeStr = DateFormat('hh:mm a').format(meeting.endTime);
+    final statusColor = _getMeetingStatusColor(meeting.status);
+
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            width: 60,
+            child: Column(
+              children: [
+                if (!isFirst)
+                  Container(width: 2, height: 20, color: cs.primary.withOpacity(0.3)),
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.purple, Colors.purple.shade300],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.purple.withOpacity(0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(Icons.videocam, color: Colors.white, size: 20),
+                ),
+                Expanded(
+                  child: Container(
+                    width: 2,
+                    color: isLast ? Colors.transparent : cs.primary.withOpacity(0.3),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [Colors.purple.withOpacity(0.1), Colors.white],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: const BorderRadius.only(
+                          topLeft: Radius.circular(16),
+                          topRight: Radius.circular(16),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.purple.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: const Text(
+                              'Meeting Scheduled',
+                              style: TextStyle(
+                                color: Colors.purple,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: statusColor.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              meeting.status.label.toUpperCase(),
+                              style: TextStyle(
+                                color: statusColor,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          const Spacer(),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(dateStr,
+                                  style: TextStyle(
+                                      color: Colors.grey.shade600,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500)),
+                              Text('$timeStr - $endTimeStr',
+                                  style: TextStyle(
+                                      color: Colors.grey.shade400, fontSize: 11)),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            meeting.title,
+                            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.purple.shade50,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: Colors.purple.shade100),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(Icons.videocam, size: 14, color: Colors.purple.shade600),
+                                    const SizedBox(width: 6),
+                                    Text('Type: ${meeting.type.label}',
+                                        style: TextStyle(color: Colors.purple.shade700, fontSize: 12, fontWeight: FontWeight.w600)),
+                                  ],
+                                ),
+                                if (meeting.guests.isNotEmpty) ...[
+                                  const SizedBox(height: 4),
+                                  Row(
+                                    children: [
+                                      Icon(Icons.people, size: 14, color: Colors.purple.shade600),
+                                      const SizedBox(width: 6),
+                                      Expanded(
+                                        child: Text(
+                                          'Guests: ${meeting.guests.map((g) => g.email).join(", ")}',
+                                          style: TextStyle(color: Colors.purple.shade600, fontSize: 11),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                                if (meeting.description != null && meeting.description!.isNotEmpty) ...[
+                                  const SizedBox(height: 4),
+                                  Row(
+                                    children: [
+                                      Icon(Icons.notes, size: 14, color: Colors.purple.shade600),
+                                      const SizedBox(width: 6),
+                                      Expanded(
+                                        child: Text(meeting.description!,
+                                            style: TextStyle(color: Colors.purple.shade600, fontSize: 11)),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -1856,7 +2069,7 @@ class _ActionType {
 }
 
 // Timeline entry type enum
-enum _TimelineType { history, email }
+enum _TimelineType { history, email, meeting }
 
 // Combined timeline entry
 class _TimelineEntry {
@@ -1864,11 +2077,13 @@ class _TimelineEntry {
   final DateTime timestamp;
   final LeadHistory? historyEntry;
   final EmailLog? emailLog;
+  final Meeting? meeting;
 
   _TimelineEntry({
     required this.type,
     required this.timestamp,
     this.historyEntry,
     this.emailLog,
+    this.meeting,
   });
 }

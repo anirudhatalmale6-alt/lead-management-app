@@ -184,6 +184,8 @@ class _ScheduleMeetingDialogState extends State<ScheduleMeetingDialog> {
         guests: _guests,
         createdBy: widget.currentUser.email,
         createdAt: DateTime.now(),
+        organizerUid: widget.currentUser.uid,
+        assignedTo: widget.currentUser.uid,
       );
 
       await _calendarService.createMeeting(meeting);

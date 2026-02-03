@@ -828,6 +828,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                   ),
                 ),
+                if (totalMissed > 5)
+                  TextButton(
+                    onPressed: () {
+                      // Show all missed activities in a dialog
+                      _showAllMissedActivitiesDialog(context);
+                    },
+                    child: Text(
+                      'View All',
+                      style: TextStyle(
+                        color: Colors.red.shade700,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: 12),
@@ -835,12 +849,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
             if (totalMissed > 5)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  '+ ${totalMissed - 5} more overdue activities',
-                  style: TextStyle(
-                    color: Colors.red.shade600,
-                    fontStyle: FontStyle.italic,
-                  ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      '+ ${totalMissed - 5} more overdue activities',
+                      style: TextStyle(
+                        color: Colors.red.shade600,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => _showAllMissedActivitiesDialog(context),
+                      icon: Icon(Icons.visibility, size: 16, color: Colors.red.shade600),
+                      label: Text(
+                        'View All',
+                        style: TextStyle(color: Colors.red.shade600, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
                 ),
               ),
           ],
@@ -901,6 +928,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 color: Colors.red.shade700,
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAllMissedActivitiesDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.red.shade700),
+            const SizedBox(width: 10),
+            Text(
+              'All Missed Activities (${_missedActivities.length})',
+              style: TextStyle(color: Colors.red.shade700),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 400,
+          child: ListView.builder(
+            itemCount: _missedActivities.length,
+            itemBuilder: (context, index) {
+              return _buildMissedActivityRow(_missedActivities[index]);
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Close'),
           ),
         ],
       ),
@@ -2082,13 +2143,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
       builder: (context, constraints) {
         final isWide = constraints.maxWidth >= 800;
         if (isWide) {
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(child: _buildHealthPieChart(context)),
-              const SizedBox(width: 16),
-              Expanded(child: _buildStageBarChart(context)),
-            ],
+          // Use IntrinsicHeight to ensure both charts have equal height
+          return IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: _buildHealthPieChart(context)),
+                const SizedBox(width: 16),
+                Expanded(child: _buildStageBarChart(context)),
+              ],
+            ),
           );
         } else {
           return Column(
