@@ -409,13 +409,14 @@ class _ScheduleMeetingDialogState extends State<ScheduleMeetingDialog> {
                       ),
                       const SizedBox(height: 16),
 
-                      // Description
+                      // Description / Agenda
                       TextFormField(
                         controller: _descriptionController,
                         maxLines: 2,
                         decoration: const InputDecoration(
-                          labelText: 'Description (optional)',
+                          labelText: 'Agenda / Description',
                           prefixIcon: Icon(Icons.notes),
+                          hintText: 'Enter meeting agenda...',
                         ),
                       ),
                       const SizedBox(height: 16),

@@ -1328,6 +1328,25 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
                             meeting.title,
                             style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
                           ),
+                          if (meeting.description != null && meeting.description!.isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            Row(
+                              children: [
+                                Icon(Icons.subject, size: 14, color: Colors.purple.shade700),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    'Agenda: ${meeting.description!}',
+                                    style: TextStyle(
+                                      color: Colors.purple.shade800,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                           const SizedBox(height: 8),
                           Container(
                             width: double.infinity,
@@ -1361,19 +1380,6 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
                                           maxLines: 2,
                                           overflow: TextOverflow.ellipsis,
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                                if (meeting.description != null && meeting.description!.isNotEmpty) ...[
-                                  const SizedBox(height: 4),
-                                  Row(
-                                    children: [
-                                      Icon(Icons.notes, size: 14, color: Colors.purple.shade600),
-                                      const SizedBox(width: 6),
-                                      Expanded(
-                                        child: Text(meeting.description!,
-                                            style: TextStyle(color: Colors.purple.shade600, fontSize: 11)),
                                       ),
                                     ],
                                   ),
@@ -1831,6 +1837,25 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
                 ),
               ],
             ),
+            if (meeting.description != null && meeting.description!.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Icon(Icons.subject, size: 15, color: Colors.purple.shade700),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Agenda: ${meeting.description!}',
+                      style: TextStyle(
+                        color: Colors.purple.shade800,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 8),
             Row(
               children: [

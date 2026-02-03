@@ -2246,7 +2246,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildStageBarChart(BuildContext context) {
     final data = _stageCounts;
     final maxCount = data.values.fold(0, (a, b) => a > b ? a : b);
+    final total = _totalLeads;
 
+    // Use a custom horizontal bar layout for clarity
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -2260,117 +2262,75 @@ class _DashboardScreenState extends State<DashboardScreen> {
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 16),
-            SizedBox(
-              height: 240,
-              child: _totalLeads == 0
-                  ? const Center(child: Text('No data'))
-                  : BarChart(
-                      BarChartData(
-                        alignment: BarChartAlignment.spaceAround,
-                        maxY: (maxCount + 1).toDouble(),
-                        barTouchData: BarTouchData(
-                          enabled: true,
-                          touchTooltipData: BarTouchTooltipData(
-                            getTooltipItem:
-                                (group, groupIndex, rod, rodIndex) {
-                              final stage =
-                                  LeadStage.values[group.x.toInt()];
-                              return BarTooltipItem(
-                                '${stage.label}\n${rod.toY.round()}',
-                                const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
+            total == 0
+                ? const SizedBox(
+                    height: 240,
+                    child: Center(child: Text('No data')),
+                  )
+                : Column(
+                    children: LeadStage.values.map((stage) {
+                      final count = data[stage] ?? 0;
+                      final percentage = total > 0 ? count / maxCount : 0.0;
+                      final pctStr = total > 0
+                          ? '${(count / total * 100).toStringAsFixed(1)}%'
+                          : '0%';
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 110,
+                              child: Text(
+                                stage.label,
+                                style: const TextStyle(
                                   fontSize: 12,
+                                  fontWeight: FontWeight.w500,
                                 ),
-                              );
-                            },
-                          ),
-                        ),
-                        titlesData: FlTitlesData(
-                          show: true,
-                          topTitles: const AxisTitles(
-                            sideTitles: SideTitles(showTitles: false),
-                          ),
-                          rightTitles: const AxisTitles(
-                            sideTitles: SideTitles(showTitles: false),
-                          ),
-                          leftTitles: AxisTitles(
-                            sideTitles: SideTitles(
-                              showTitles: true,
-                              reservedSize: 30,
-                              interval: 1,
-                              getTitlesWidget: (value, meta) {
-                                if (value == value.roundToDouble() &&
-                                    value >= 0) {
-                                  return Text(
-                                    '${value.toInt()}',
-                                    style: const TextStyle(fontSize: 11),
-                                  );
-                                }
-                                return const SizedBox.shrink();
-                              },
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
-                          ),
-                          bottomTitles: AxisTitles(
-                            sideTitles: SideTitles(
-                              showTitles: true,
-                              reservedSize: 70,
-                              getTitlesWidget: (value, meta) {
-                                final idx = value.toInt();
-                                if (idx < 0 ||
-                                    idx >= LeadStage.values.length) {
-                                  return const SizedBox.shrink();
-                                }
-                                final label = LeadStage.values[idx].label;
-                                return SideTitleWidget(
-                                  meta: meta,
-                                  angle: -45 * 3.14159 / 180,
-                                  child: Text(
-                                    label,
-                                    style: const TextStyle(fontSize: 9),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Stack(
+                                children: [
+                                  Container(
+                                    height: 22,
+                                    decoration: BoxDecoration(
+                                      color: Colors.grey.shade200,
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
                                   ),
-                                );
-                              },
+                                  FractionallySizedBox(
+                                    widthFactor: maxCount > 0 ? percentage.clamp(0.0, 1.0) : 0,
+                                    child: Container(
+                                      height: 22,
+                                      decoration: BoxDecoration(
+                                        color: _stageColor(stage),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                        ),
-                        borderData: FlBorderData(show: false),
-                        gridData: FlGridData(
-                          show: true,
-                          drawVerticalLine: false,
-                          horizontalInterval: 1,
-                          getDrawingHorizontalLine: (value) => FlLine(
-                            color: Colors.grey.shade200,
-                            strokeWidth: 1,
-                          ),
-                        ),
-                        barGroups: List.generate(
-                          LeadStage.values.length,
-                          (index) {
-                            final count =
-                                data[LeadStage.values[index]] ?? 0;
-                            return BarChartGroupData(
-                              x: index,
-                              barRods: [
-                                BarChartRodData(
-                                  toY: count.toDouble(),
-                                  color:
-                                      _stageColor(LeadStage.values[index]),
-                                  width: 18,
-                                  borderRadius: const BorderRadius.only(
-                                    topLeft: Radius.circular(4),
-                                    topRight: Radius.circular(4),
-                                  ),
+                            const SizedBox(width: 8),
+                            SizedBox(
+                              width: 55,
+                              child: Text(
+                                '$count ($pctStr)',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.grey.shade700,
                                 ),
-                              ],
-                            );
-                          },
+                                textAlign: TextAlign.right,
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                    ),
-            ),
+                      );
+                    }).toList(),
+                  ),
           ],
         ),
       ),
