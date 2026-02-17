@@ -3,7 +3,10 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
 import '../models/lead.dart';
 import '../models/meeting.dart';
+import '../models/user.dart';
 import '../services/calendar_service.dart';
+import '../services/firestore_service.dart';
+import '../services/user_service.dart';
 import '../theme/app_theme.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -36,10 +39,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<Meeting> _allMeetings = [];
   bool _loadingMeetings = true;
 
+  // Hierarchy filter: Team > Group > User
+  List<Map<String, dynamic>> _teams = [];
+  List<Map<String, dynamic>> _groups = [];
+  List<AppUser> _users = [];
+  String? _filterTeamId;
+  String? _filterGroupId;
+  String? _filterUserId;
+
   @override
   void initState() {
     super.initState();
     _loadMeetings();
+    _loadHierarchyData();
+  }
+
+  Future<void> _loadHierarchyData() async {
+    try {
+      final teams = await FirestoreService().getTeams();
+      final groups = await FirestoreService().getGroups();
+      final users = await UserService().getAllUsers();
+      if (mounted) {
+        setState(() {
+          _teams = teams;
+          _groups = groups;
+          _users = users;
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadMeetings() async {
@@ -73,7 +100,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _filterDateFrom != null ||
       _filterDateTo != null ||
       _filterHasFollowUp ||
-      _filterHasMeeting;
+      _filterHasMeeting ||
+      _filterTeamId != null ||
+      _filterGroupId != null ||
+      _filterUserId != null;
 
   // Get the date threshold based on selected time period
   DateTime? get _timePeriodThreshold {
@@ -155,6 +185,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
       results = results.where((l) => l.meetingDate != null).toList();
     }
 
+    // Hierarchy filter: Team > Group > User
+    if (_filterTeamId != null) {
+      results = results.where((l) => l.teamId == _filterTeamId).toList();
+    }
+    if (_filterGroupId != null) {
+      results = results.where((l) => l.groupId == _filterGroupId).toList();
+    }
+    if (_filterUserId != null) {
+      final user = _users.where((u) => u.uid == _filterUserId).firstOrNull;
+      if (user != null) {
+        results = results.where((l) =>
+          l.ownerUid == _filterUserId ||
+          l.assignedTo == user.email ||
+          l.createdBy == user.email
+        ).toList();
+      }
+    }
+
     return results;
   }
 
@@ -178,6 +226,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _filterDateTo = null;
       _filterHasFollowUp = false;
       _filterHasMeeting = false;
+      _filterTeamId = null;
+      _filterGroupId = null;
+      _filterUserId = null;
     });
   }
 
@@ -348,6 +399,91 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   // ---------------------------------------------------------------------------
+  // Separated Follow-up and Meeting lists for 6-card layout
+  // ---------------------------------------------------------------------------
+
+  /// Leads with follow-up due today
+  List<Lead> get _todayFollowups => leads.where((l) =>
+    l.nextFollowUpDate != null && _isToday(l.nextFollowUpDate!) &&
+    l.stage != LeadStage.won && l.stage != LeadStage.lost
+  ).toList();
+
+  /// Leads with follow-up due in the future (not today)
+  List<Lead> get _upcomingFollowups {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    return leads.where((l) =>
+      l.nextFollowUpDate != null &&
+      l.nextFollowUpDate!.isAfter(today.add(const Duration(days: 1))) &&
+      l.stage != LeadStage.won && l.stage != LeadStage.lost
+    ).toList()..sort((a, b) => a.nextFollowUpDate!.compareTo(b.nextFollowUpDate!));
+  }
+
+  /// Leads with meeting today
+  List<Lead> get _todayMeetings => leads.where((l) =>
+    l.meetingDate != null && _isToday(l.meetingDate!) &&
+    l.stage != LeadStage.won && l.stage != LeadStage.lost
+  ).toList();
+
+  /// Leads with meeting in the future (not today)
+  List<Lead> get _upcomingMeetingsLeads {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    return leads.where((l) =>
+      l.meetingDate != null &&
+      l.meetingDate!.isAfter(today.add(const Duration(days: 1))) &&
+      l.stage != LeadStage.won && l.stage != LeadStage.lost
+    ).toList()..sort((a, b) => a.meetingDate!.compareTo(b.meetingDate!));
+  }
+
+  /// Leads with missed/overdue follow-ups
+  List<Lead> get _missedFollowups {
+    final now = DateTime.now();
+    return leads.where((l) =>
+      l.nextFollowUpDate != null &&
+      l.nextFollowUpDate!.isBefore(now) &&
+      !_isToday(l.nextFollowUpDate!) &&
+      l.stage != LeadStage.won && l.stage != LeadStage.lost
+    ).toList()..sort((a, b) => a.nextFollowUpDate!.compareTo(b.nextFollowUpDate!));
+  }
+
+  /// Leads with missed/overdue meetings
+  List<Lead> get _missedMeetingsLeads {
+    final now = DateTime.now();
+    return leads.where((l) =>
+      l.meetingDate != null &&
+      l.meetingDate!.isBefore(now) &&
+      !_isToday(l.meetingDate!) &&
+      l.stage != LeadStage.won && l.stage != LeadStage.lost
+    ).toList()..sort((a, b) => a.meetingDate!.compareTo(b.meetingDate!));
+  }
+
+  /// Format narration for a lead card item
+  String _buildNarration(Lead lead, {DateTime? dateOverride}) {
+    final parts = <String>[];
+    // Business Category (Interested Service/Product)
+    parts.add(lead.interestedInProduct.label);
+    // Meeting Agenda Type
+    parts.add(lead.meetingAgenda.label);
+    // Date-Time
+    final date = dateOverride ?? lead.nextFollowUpDate ?? lead.meetingDate;
+    if (date != null) {
+      final time = lead.meetingTime.isNotEmpty ? lead.meetingTime : lead.nextFollowUpTime;
+      parts.add('${DateFormat('dd MMM').format(date)}${time.isNotEmpty ? " - $time" : ""}');
+    }
+    // Client Name - City
+    final nameCity = lead.clientCity.isNotEmpty
+        ? '${lead.clientName} - ${lead.clientCity}'
+        : lead.clientName;
+    parts.add(nameCity);
+    // Assigned To
+    if (lead.assignedTo.isNotEmpty) parts.add(lead.assignedTo.split('@').first);
+    // Created By
+    if (lead.createdBy.isNotEmpty) parts.add(lead.createdBy.split('@').first);
+    return parts.join(' | ');
+  }
+
+  // ---------------------------------------------------------------------------
   // Computed data — Breakdowns
   // ---------------------------------------------------------------------------
 
@@ -477,6 +613,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
           child: Column(
             children: [
+              // Hierarchy filter: Team > Group > User
+              _buildHierarchyFilter(),
+              const SizedBox(height: 8),
               // Time period chips
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
@@ -596,6 +735,110 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Widget _buildHierarchyFilter() {
+    // Filter groups by selected team
+    final filteredGroups = _filterTeamId != null
+        ? _groups.where((g) => g['team_id'] == _filterTeamId).toList()
+        : _groups;
+    // Filter users by selected team/group
+    var filteredUsers = _users;
+    if (_filterTeamId != null) {
+      filteredUsers = filteredUsers.where((u) => u.teamId == _filterTeamId).toList();
+    }
+    if (_filterGroupId != null) {
+      filteredUsers = filteredUsers.where((u) => u.groupId == _filterGroupId).toList();
+    }
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          // Team dropdown
+          SizedBox(
+            width: 150,
+            child: DropdownButtonFormField<String>(
+              value: _filterTeamId,
+              isDense: true,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: 'Team',
+                labelStyle: const TextStyle(fontSize: 12),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)),
+              ),
+              items: [
+                const DropdownMenuItem<String>(value: null, child: Text('All Teams', style: TextStyle(fontSize: 12))),
+                ..._teams.map((t) => DropdownMenuItem<String>(
+                  value: t['id'] as String,
+                  child: Text(t['name'] as String? ?? '', style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
+                )),
+              ],
+              onChanged: (v) => setState(() {
+                _filterTeamId = v;
+                _filterGroupId = null;
+                _filterUserId = null;
+              }),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Group dropdown
+          SizedBox(
+            width: 150,
+            child: DropdownButtonFormField<String>(
+              value: _filterGroupId,
+              isDense: true,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: 'Group',
+                labelStyle: const TextStyle(fontSize: 12),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)),
+              ),
+              items: [
+                const DropdownMenuItem<String>(value: null, child: Text('All Groups', style: TextStyle(fontSize: 12))),
+                ...filteredGroups.map((g) => DropdownMenuItem<String>(
+                  value: g['id'] as String,
+                  child: Text(g['name'] as String? ?? '', style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
+                )),
+              ],
+              onChanged: (v) => setState(() {
+                _filterGroupId = v;
+                _filterUserId = null;
+              }),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // User dropdown
+          SizedBox(
+            width: 150,
+            child: DropdownButtonFormField<String>(
+              value: _filterUserId,
+              isDense: true,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: 'User',
+                labelStyle: const TextStyle(fontSize: 12),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)),
+              ),
+              items: [
+                const DropdownMenuItem<String>(value: null, child: Text('All Users', style: TextStyle(fontSize: 12))),
+                ...filteredUsers.map((u) => DropdownMenuItem<String>(
+                  value: u.uid,
+                  child: Text(u.name.isNotEmpty ? u.name : u.email, style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
+                )),
+              ],
+              onChanged: (v) => setState(() => _filterUserId = v),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildTimePeriodChip(String value, String label) {
     final isSelected = _selectedTimePeriod == value;
     return Padding(
@@ -651,13 +894,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           // 2. Today's Summary
           _buildTodaysSummaryCard(),
           const SizedBox(height: 16),
-          // 3. Missed Activity Alert Box (if any)
-          if (_missedActivities.isNotEmpty) ...[
-            _buildMissedActivityAlertBox(),
-            const SizedBox(height: 16),
-          ],
-          // 4. Live Activity Panel (side by side on wide screens)
-          _buildActivityPanels(),
+          // 3. Follow-up & Meeting Cards (6 cards in 3 rows of 2)
+          _buildFollowupMeetingCards(),
           const SizedBox(height: 24),
           // 5. Pipeline Charts
           _buildChartsRow(context),
@@ -995,6 +1233,271 @@ class _DashboardScreenState extends State<DashboardScreen> {
           );
         }
       },
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // 6-Card Follow-up & Meeting Layout
+  // ---------------------------------------------------------------------------
+
+  Widget _buildFollowupMeetingCards() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth >= 700;
+        if (isWide) {
+          return Column(
+            children: [
+              // Row 1: Today Followup | Upcoming Followup
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: _buildAgendaCard(
+                    title: 'Today Followup',
+                    items: _todayFollowups,
+                    color: Colors.orange,
+                    icon: Icons.phone_callback,
+                    dateGetter: (l) => l.nextFollowUpDate,
+                  )),
+                  const SizedBox(width: 12),
+                  Expanded(child: _buildAgendaCard(
+                    title: 'Upcoming Followup',
+                    items: _upcomingFollowups,
+                    color: Colors.teal,
+                    icon: Icons.schedule,
+                    dateGetter: (l) => l.nextFollowUpDate,
+                  )),
+                ],
+              ),
+              const SizedBox(height: 12),
+              // Row 2: Today Meeting | Upcoming Meeting
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: _buildAgendaCard(
+                    title: 'Today Meeting',
+                    items: _todayMeetings,
+                    color: Colors.blue,
+                    icon: Icons.videocam,
+                    dateGetter: (l) => l.meetingDate,
+                  )),
+                  const SizedBox(width: 12),
+                  Expanded(child: _buildAgendaCard(
+                    title: 'Upcoming Meeting',
+                    items: _upcomingMeetingsLeads,
+                    color: Colors.indigo,
+                    icon: Icons.event,
+                    dateGetter: (l) => l.meetingDate,
+                  )),
+                ],
+              ),
+              const SizedBox(height: 12),
+              // Row 3: Missed Followup | Missed Meeting
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: _buildAgendaCard(
+                    title: 'Missed Followup',
+                    items: _missedFollowups,
+                    color: Colors.red,
+                    icon: Icons.phone_missed,
+                    dateGetter: (l) => l.nextFollowUpDate,
+                    isMissed: true,
+                  )),
+                  const SizedBox(width: 12),
+                  Expanded(child: _buildAgendaCard(
+                    title: 'Missed Meeting',
+                    items: _missedMeetingsLeads,
+                    color: Colors.red.shade700,
+                    icon: Icons.event_busy,
+                    dateGetter: (l) => l.meetingDate,
+                    isMissed: true,
+                  )),
+                ],
+              ),
+            ],
+          );
+        } else {
+          // Mobile: stack vertically
+          return Column(
+            children: [
+              _buildAgendaCard(title: 'Today Followup', items: _todayFollowups, color: Colors.orange, icon: Icons.phone_callback, dateGetter: (l) => l.nextFollowUpDate),
+              const SizedBox(height: 12),
+              _buildAgendaCard(title: 'Upcoming Followup', items: _upcomingFollowups, color: Colors.teal, icon: Icons.schedule, dateGetter: (l) => l.nextFollowUpDate),
+              const SizedBox(height: 12),
+              _buildAgendaCard(title: 'Today Meeting', items: _todayMeetings, color: Colors.blue, icon: Icons.videocam, dateGetter: (l) => l.meetingDate),
+              const SizedBox(height: 12),
+              _buildAgendaCard(title: 'Upcoming Meeting', items: _upcomingMeetingsLeads, color: Colors.indigo, icon: Icons.event, dateGetter: (l) => l.meetingDate),
+              const SizedBox(height: 12),
+              _buildAgendaCard(title: 'Missed Followup', items: _missedFollowups, color: Colors.red, icon: Icons.phone_missed, dateGetter: (l) => l.nextFollowUpDate, isMissed: true),
+              const SizedBox(height: 12),
+              _buildAgendaCard(title: 'Missed Meeting', items: _missedMeetingsLeads, color: Colors.red.shade700, icon: Icons.event_busy, dateGetter: (l) => l.meetingDate, isMissed: true),
+            ],
+          );
+        }
+      },
+    );
+  }
+
+  Widget _buildAgendaCard({
+    required String title,
+    required List<Lead> items,
+    required Color color,
+    required IconData icon,
+    required DateTime? Function(Lead) dateGetter,
+    bool isMissed = false,
+  }) {
+    final displayItems = items.take(5).toList();
+    final totalCount = items.length;
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: isMissed && totalCount > 0 ? BorderSide(color: color.withOpacity(0.5), width: 1.5) : BorderSide.none,
+      ),
+      color: isMissed && totalCount > 0 ? color.withOpacity(0.05) : null,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header
+            Row(
+              children: [
+                Icon(icon, color: color, size: 22),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: color),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '$totalCount',
+                    style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            // Items
+            if (displayItems.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Center(
+                  child: Text(
+                    'None',
+                    style: TextStyle(color: Colors.grey.shade400, fontSize: 13),
+                  ),
+                ),
+              )
+            else ...[
+              ...displayItems.asMap().entries.map((entry) {
+                final idx = entry.key + 1;
+                final lead = entry.value;
+                final date = dateGetter(lead);
+                return _buildAgendaItemRow(idx, lead, date, color, isMissed: isMissed);
+              }),
+            ],
+            // View All
+            if (totalCount > 5) ...[
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () => _showAllItemsDialog(title, items, color, icon, dateGetter, isMissed: isMissed),
+                  child: Text(
+                    'View all ($totalCount)',
+                    style: TextStyle(color: color, fontWeight: FontWeight.w600, fontSize: 12),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAgendaItemRow(int index, Lead lead, DateTime? date, Color color, {bool isMissed = false}) {
+    final narration = _buildNarration(lead, dateOverride: date);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: isMissed ? Colors.red.shade50 : Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: isMissed ? Border.all(color: Colors.red.shade200) : null,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '$index.',
+            style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 12),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              narration,
+              style: const TextStyle(fontSize: 12, height: 1.4),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (isMissed && date != null) ...[
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.red.shade100,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                '${DateTime.now().difference(date).inDays}d late',
+                style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.red.shade700),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  void _showAllItemsDialog(String title, List<Lead> items, Color color, IconData icon, DateTime? Function(Lead) dateGetter, {bool isMissed = false}) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(icon, color: color),
+            const SizedBox(width: 10),
+            Text(title, style: TextStyle(color: color)),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 400,
+          child: ListView.builder(
+            itemCount: items.length,
+            itemBuilder: (context, index) {
+              final lead = items[index];
+              final date = dateGetter(lead);
+              return _buildAgendaItemRow(index + 1, lead, date, color, isMissed: isMissed);
+            },
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Close')),
+        ],
+      ),
     );
   }
 
