@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/lead.dart';
+import '../models/user.dart';
+import '../services/firestore_service.dart';
+import '../services/user_service.dart';
 import '../theme/app_theme.dart';
 
 class PipelineScreen extends StatefulWidget {
@@ -117,6 +120,14 @@ class _PipelineScreenState extends State<PipelineScreen> {
   bool _filterHasFollowUp = false;
   bool _filterHasMeeting = false;
 
+  // Hierarchy filter: Team > Group > User
+  List<Map<String, dynamic>> _teams = [];
+  List<Map<String, dynamic>> _groups = [];
+  List<AppUser> _users = [];
+  String? _filterTeamId;
+  String? _filterGroupId;
+  String? _filterUserId;
+
   static const List<LeadStage> _stages = LeadStage.values;
 
   @override
@@ -124,11 +135,23 @@ class _PipelineScreenState extends State<PipelineScreen> {
     super.initState();
     _kanbanScrollController.addListener(_updateScrollIndicators);
     _tableScrollController.addListener(_updateTableScrollIndicators);
+    _loadHierarchyData();
     // Initialize scroll indicators after first frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _updateScrollIndicators();
       _updateTableScrollIndicators();
     });
+  }
+
+  Future<void> _loadHierarchyData() async {
+    try {
+      final teams = await FirestoreService().getTeams();
+      final groups = await FirestoreService().getGroups();
+      final users = await UserService().getAllUsers();
+      if (mounted) {
+        setState(() { _teams = teams; _groups = groups; _users = users; });
+      }
+    } catch (_) {}
   }
 
   void _updateScrollIndicators() {
@@ -169,7 +192,10 @@ class _PipelineScreenState extends State<PipelineScreen> {
       _filterDateFrom != null ||
       _filterDateTo != null ||
       _filterHasFollowUp ||
-      _filterHasMeeting;
+      _filterHasMeeting ||
+      _filterTeamId != null ||
+      _filterGroupId != null ||
+      _filterUserId != null;
 
   List<Lead> get _filteredLeads {
     var results = widget.leads.toList();
@@ -233,6 +259,24 @@ class _PipelineScreenState extends State<PipelineScreen> {
       results = results.where((l) => l.meetingDate != null).toList();
     }
 
+    // Hierarchy filter: Team > Group > User
+    if (_filterTeamId != null) {
+      results = results.where((l) => l.teamId == _filterTeamId).toList();
+    }
+    if (_filterGroupId != null) {
+      results = results.where((l) => l.groupId == _filterGroupId).toList();
+    }
+    if (_filterUserId != null) {
+      final user = _users.where((u) => u.uid == _filterUserId).firstOrNull;
+      if (user != null) {
+        results = results.where((l) =>
+          l.ownerUid == _filterUserId ||
+          l.assignedTo == user.email ||
+          l.createdBy == user.email
+        ).toList();
+      }
+    }
+
     // Apply sorting
     results = _sortLeads(results);
 
@@ -294,6 +338,9 @@ class _PipelineScreenState extends State<PipelineScreen> {
       _filterDateTo = null;
       _filterHasFollowUp = false;
       _filterHasMeeting = false;
+      _filterTeamId = null;
+      _filterGroupId = null;
+      _filterUserId = null;
     });
   }
 
@@ -1385,6 +1432,110 @@ class _PipelineScreenState extends State<PipelineScreen> {
     }
   }
 
+  Widget _buildHierarchyFilterRow() {
+    // Filter groups by selected team
+    final filteredGroups = _filterTeamId != null
+        ? _groups.where((g) => g['team_id'] == _filterTeamId).toList()
+        : _groups;
+    // Filter users by selected team/group
+    var filteredUsers = _users;
+    if (_filterTeamId != null) {
+      filteredUsers = filteredUsers.where((u) => u.teamId == _filterTeamId).toList();
+    }
+    if (_filterGroupId != null) {
+      filteredUsers = filteredUsers.where((u) => u.groupId == _filterGroupId).toList();
+    }
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          // Team dropdown
+          SizedBox(
+            width: 160,
+            child: DropdownButtonFormField<String>(
+              value: _filterTeamId,
+              isDense: true,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: 'Team',
+                labelStyle: const TextStyle(fontSize: 12),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)),
+              ),
+              items: [
+                const DropdownMenuItem<String>(value: null, child: Text('All Teams', style: TextStyle(fontSize: 12))),
+                ..._teams.map((t) => DropdownMenuItem<String>(
+                  value: t['id'] as String,
+                  child: Text(t['name'] as String? ?? '', style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
+                )),
+              ],
+              onChanged: (v) => setState(() {
+                _filterTeamId = v;
+                _filterGroupId = null;
+                _filterUserId = null;
+              }),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Group dropdown
+          SizedBox(
+            width: 160,
+            child: DropdownButtonFormField<String>(
+              value: _filterGroupId,
+              isDense: true,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: 'Group',
+                labelStyle: const TextStyle(fontSize: 12),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)),
+              ),
+              items: [
+                const DropdownMenuItem<String>(value: null, child: Text('All Groups', style: TextStyle(fontSize: 12))),
+                ...filteredGroups.map((g) => DropdownMenuItem<String>(
+                  value: g['id'] as String,
+                  child: Text(g['name'] as String? ?? '', style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
+                )),
+              ],
+              onChanged: (v) => setState(() {
+                _filterGroupId = v;
+                _filterUserId = null;
+              }),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // User dropdown
+          SizedBox(
+            width: 160,
+            child: DropdownButtonFormField<String>(
+              value: _filterUserId,
+              isDense: true,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: 'User',
+                labelStyle: const TextStyle(fontSize: 12),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)),
+              ),
+              items: [
+                const DropdownMenuItem<String>(value: null, child: Text('All Users', style: TextStyle(fontSize: 12))),
+                ...filteredUsers.map((u) => DropdownMenuItem<String>(
+                  value: u.uid,
+                  child: Text(u.name.isNotEmpty ? u.name : u.email, style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
+                )),
+              ],
+              onChanged: (v) => setState(() => _filterUserId = v),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildFilterPanel() {
     final dateFormat = DateFormat('dd MMM yyyy');
 
@@ -1395,6 +1546,9 @@ class _PipelineScreenState extends State<PipelineScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Divider(height: 1),
+          const SizedBox(height: 10),
+          // Row 0: Team > Group > User hierarchy filter
+          _buildHierarchyFilterRow(),
           const SizedBox(height: 10),
           // Row 1: Status dropdowns
           Wrap(

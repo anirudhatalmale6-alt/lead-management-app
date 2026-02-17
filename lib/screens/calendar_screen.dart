@@ -4,6 +4,7 @@ import '../models/meeting.dart';
 import '../models/user.dart';
 import '../models/lead.dart';
 import '../services/calendar_service.dart';
+import '../services/firestore_service.dart';
 import '../services/lead_service.dart';
 import '../services/user_service.dart';
 import '../widgets/schedule_meeting_dialog.dart';
@@ -40,12 +41,39 @@ class _CalendarScreenState extends State<CalendarScreen> {
   String? _selectedMemberUid; // Selected team member UID for filtering (null = all)
   final UserService _userService = UserService();
 
+  // Hierarchy filter: Team > Group > User
+  List<Map<String, dynamic>> _teams = [];
+  List<Map<String, dynamic>> _groups = [];
+  List<AppUser> _allUsers = [];
+  String? _filterTeamId;
+  String? _filterGroupId;
+  String? _filterUserId;
+
   @override
   void initState() {
     super.initState();
     _selectedDate = DateTime.now();
     _loadMeetings();
     _loadVisibleUsers();
+    _loadHierarchyData();
+  }
+
+  Future<void> _loadHierarchyData() async {
+    try {
+      final fs = FirestoreService();
+      final teams = await fs.getTeams();
+      final groups = await fs.getGroups();
+      final users = await _userService.getAllUsers();
+      if (mounted) {
+        setState(() {
+          _teams = teams;
+          _groups = groups;
+          _allUsers = users;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading hierarchy data: $e');
+    }
   }
 
   Future<void> _loadVisibleUsers() async {
@@ -196,16 +224,50 @@ class _CalendarScreenState extends State<CalendarScreen> {
         return isOrganizer || isGuest || isAssigned;
       }).toList();
     }
-    // For 'team' scope with a specific member selected, filter to that member's meetings
-    if (_calendarScope == 'team' && _selectedMemberUid != null) {
-      final selectedUser = _visibleUsers.where((u) => u.uid == _selectedMemberUid).firstOrNull;
-      if (selectedUser != null) {
+    // Hierarchy filter: Team > Group > User (when in team scope)
+    if (_calendarScope == 'team') {
+      // Filter by team - find all users in selected team, then filter meetings to those users
+      if (_filterTeamId != null) {
+        final teamUserUids = _allUsers.where((u) => u.teamId == _filterTeamId).map((u) => u.uid).toSet();
+        final teamUserEmails = _allUsers.where((u) => u.teamId == _filterTeamId).map((u) => u.email).toSet();
         results = results.where((m) {
-          final isOrganizer = m.organizerUid == selectedUser.uid;
-          final isGuest = m.guests.any((g) => g.email == selectedUser.email);
-          final isAssigned = m.assignedTo == selectedUser.uid;
-          return isOrganizer || isGuest || isAssigned;
+          return teamUserUids.contains(m.organizerUid) ||
+              teamUserEmails.any((email) => m.guests.any((g) => g.email == email)) ||
+              teamUserUids.contains(m.assignedTo);
         }).toList();
+      }
+      // Filter by group
+      if (_filterGroupId != null) {
+        final groupUserUids = _allUsers.where((u) => u.groupId == _filterGroupId).map((u) => u.uid).toSet();
+        final groupUserEmails = _allUsers.where((u) => u.groupId == _filterGroupId).map((u) => u.email).toSet();
+        results = results.where((m) {
+          return groupUserUids.contains(m.organizerUid) ||
+              groupUserEmails.any((email) => m.guests.any((g) => g.email == email)) ||
+              groupUserUids.contains(m.assignedTo);
+        }).toList();
+      }
+      // Filter by specific user
+      if (_filterUserId != null) {
+        final selectedUser = _allUsers.where((u) => u.uid == _filterUserId).firstOrNull;
+        if (selectedUser != null) {
+          results = results.where((m) {
+            final isOrganizer = m.organizerUid == selectedUser.uid;
+            final isGuest = m.guests.any((g) => g.email == selectedUser.email);
+            final isAssigned = m.assignedTo == selectedUser.uid;
+            return isOrganizer || isGuest || isAssigned;
+          }).toList();
+        }
+      } else if (_selectedMemberUid != null) {
+        // Legacy member dropdown filter (backward compat)
+        final selectedUser = _visibleUsers.where((u) => u.uid == _selectedMemberUid).firstOrNull;
+        if (selectedUser != null) {
+          results = results.where((m) {
+            final isOrganizer = m.organizerUid == selectedUser.uid;
+            final isGuest = m.guests.any((g) => g.email == selectedUser.email);
+            final isAssigned = m.assignedTo == selectedUser.uid;
+            return isOrganizer || isGuest || isAssigned;
+          }).toList();
+        }
       }
     }
 
@@ -309,7 +371,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
           const SizedBox(width: 8),
           IconButton(
             icon: Badge(
-              isLabelVisible: _filterPartyName != null || _filterStatus != null,
+              isLabelVisible: _filterPartyName != null || _filterStatus != null || _filterTeamId != null || _filterGroupId != null || _filterUserId != null,
               smallSize: 8,
               child: Icon(
                 _showFilters ? Icons.filter_list_off : Icons.filter_list,
@@ -376,6 +438,133 @@ class _CalendarScreenState extends State<CalendarScreen> {
     );
   }
 
+  Widget _buildCalendarHierarchyFilter() {
+    // Filter groups by selected team
+    final filteredGroups = _filterTeamId != null
+        ? _groups.where((g) => g['team_id'] == _filterTeamId).toList()
+        : _groups;
+    // Filter users by selected team/group
+    var filteredUsers = _allUsers.toList();
+    if (_filterTeamId != null) {
+      filteredUsers = filteredUsers.where((u) => u.teamId == _filterTeamId).toList();
+    }
+    if (_filterGroupId != null) {
+      filteredUsers = filteredUsers.where((u) => u.groupId == _filterGroupId).toList();
+    }
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          // Team dropdown
+          SizedBox(
+            width: 160,
+            child: DropdownButtonFormField<String>(
+              value: _filterTeamId,
+              isDense: true,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: 'Team',
+                labelStyle: const TextStyle(fontSize: 12),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)),
+              ),
+              items: [
+                const DropdownMenuItem<String>(value: null, child: Text('All Teams', style: TextStyle(fontSize: 12))),
+                ..._teams.map((t) => DropdownMenuItem<String>(
+                  value: t['id'] as String,
+                  child: Text(t['name'] as String? ?? '', style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
+                )),
+              ],
+              onChanged: (v) => setState(() {
+                _filterTeamId = v;
+                _filterGroupId = null;
+                _filterUserId = null;
+                _selectedMemberUid = null;
+              }),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Group dropdown
+          SizedBox(
+            width: 160,
+            child: DropdownButtonFormField<String>(
+              value: _filterGroupId,
+              isDense: true,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: 'Group',
+                labelStyle: const TextStyle(fontSize: 12),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)),
+              ),
+              items: [
+                const DropdownMenuItem<String>(value: null, child: Text('All Groups', style: TextStyle(fontSize: 12))),
+                ...filteredGroups.map((g) => DropdownMenuItem<String>(
+                  value: g['id'] as String,
+                  child: Text(g['name'] as String? ?? '', style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
+                )),
+              ],
+              onChanged: (v) => setState(() {
+                _filterGroupId = v;
+                _filterUserId = null;
+                _selectedMemberUid = null;
+              }),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // User dropdown
+          SizedBox(
+            width: 160,
+            child: DropdownButtonFormField<String>(
+              value: _filterUserId,
+              isDense: true,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: 'User',
+                labelStyle: const TextStyle(fontSize: 12),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)),
+              ),
+              items: [
+                const DropdownMenuItem<String>(value: null, child: Text('All Users', style: TextStyle(fontSize: 12))),
+                ...filteredUsers.map((u) => DropdownMenuItem<String>(
+                  value: u.uid,
+                  child: Text(u.name.isNotEmpty ? u.name : u.email, style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
+                )),
+              ],
+              onChanged: (v) => setState(() {
+                _filterUserId = v;
+                _selectedMemberUid = v; // Sync with legacy member filter
+              }),
+            ),
+          ),
+          // Clear button
+          if (_filterTeamId != null || _filterGroupId != null || _filterUserId != null) ...[
+            const SizedBox(width: 8),
+            TextButton.icon(
+              onPressed: () => setState(() {
+                _filterTeamId = null;
+                _filterGroupId = null;
+                _filterUserId = null;
+                _selectedMemberUid = null;
+              }),
+              icon: const Icon(Icons.clear, size: 16),
+              label: const Text('Clear', style: TextStyle(fontSize: 12)),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.orange.shade700,
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildFiltersPanel(ColorScheme cs) {
     final isNarrow = MediaQuery.of(context).size.width < 600;
 
@@ -389,205 +578,42 @@ class _CalendarScreenState extends State<CalendarScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Team Calendar Filter Row - responsive
-            // Only show toggle for roles that have team/group visibility
+            // Calendar View: My / Team toggle
             if (widget.currentUser.role != UserRole.member) ...[
-              if (isNarrow) ...[
-                const Text('Calendar View:', style: TextStyle(fontWeight: FontWeight.w500)),
-                const SizedBox(height: 8),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: SegmentedButton<String>(
+              Row(
+                children: [
+                  const Text('Calendar View: ', style: TextStyle(fontWeight: FontWeight.w500)),
+                  const SizedBox(width: 8),
+                  SegmentedButton<String>(
                     segments: [
-                      const ButtonSegment(value: 'my', label: Text('My'), icon: Icon(Icons.person, size: 14)),
+                      const ButtonSegment(value: 'my', label: Text('My Calendar'), icon: Icon(Icons.person, size: 16)),
                       ButtonSegment(
                         value: 'team',
-                        label: Text(widget.currentUser.role == UserRole.coordinator ? 'Group' : 'Team'),
-                        icon: const Icon(Icons.groups, size: 14),
+                        label: Text(widget.currentUser.role == UserRole.coordinator ? 'Group Calendar' : 'Team Calendar'),
+                        icon: const Icon(Icons.groups, size: 16),
                       ),
                     ],
                     selected: {_calendarScope},
                     onSelectionChanged: (selection) {
                       setState(() {
                         _calendarScope = selection.first;
-                        if (_calendarScope == 'my') _selectedMemberUid = null;
+                        if (_calendarScope == 'my') {
+                          _selectedMemberUid = null;
+                          _filterTeamId = null;
+                          _filterGroupId = null;
+                          _filterUserId = null;
+                        }
                       });
                     },
                     style: const ButtonStyle(visualDensity: VisualDensity.compact),
                   ),
-                ),
-              ] else ...[
-                Row(
-                  children: [
-                    const Text('Calendar View: ', style: TextStyle(fontWeight: FontWeight.w500)),
-                    const SizedBox(width: 8),
-                    SegmentedButton<String>(
-                      segments: [
-                        const ButtonSegment(value: 'my', label: Text('My Calendar'), icon: Icon(Icons.person, size: 16)),
-                        ButtonSegment(
-                          value: 'team',
-                          label: Text(widget.currentUser.role == UserRole.coordinator ? 'Group Calendar' : 'Team Calendar'),
-                          icon: const Icon(Icons.groups, size: 16),
-                        ),
-                      ],
-                      selected: {_calendarScope},
-                      onSelectionChanged: (selection) {
-                        setState(() => _calendarScope = selection.first);
-                      },
-                      style: const ButtonStyle(visualDensity: VisualDensity.compact),
-                    ),
-                  ],
-                ),
-              ],
+                ],
+              ),
             ],
-            // Team member dropdown (when team view is selected)
-            if (_calendarScope == 'team' && _visibleUsers.isNotEmpty) ...[
+            // Hierarchy filter: Team > Group > User (when team view is selected)
+            if (_calendarScope == 'team') ...[
               const SizedBox(height: 12),
-              if (isNarrow) ...[
-                DropdownButtonFormField<String?>(
-                  value: _selectedMemberUid,
-                  decoration: InputDecoration(
-                    labelText: 'Team Member',
-                    prefixIcon: const Icon(Icons.person_search, size: 20),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  ),
-                  items: [
-                    const DropdownMenuItem(
-                      value: null,
-                      child: Text('All Members'),
-                    ),
-                    ..._visibleUsers.map((u) => DropdownMenuItem(
-                      value: u.uid,
-                      child: Row(
-                        children: [
-                          CircleAvatar(
-                            radius: 12,
-                            backgroundColor: _getRoleColor(u.role).withOpacity(0.15),
-                            child: Text(
-                              u.name.isNotEmpty ? u.name[0].toUpperCase() : '?',
-                              style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: _getRoleColor(u.role)),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  u.uid == widget.currentUser.uid ? '${u.name} (You)' : u.name,
-                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                Text(
-                                  u.role.label,
-                                  style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    )),
-                  ],
-                  onChanged: (value) {
-                    setState(() => _selectedMemberUid = value);
-                  },
-                  selectedItemBuilder: (context) {
-                    return [
-                      const Text('All Members'),
-                      ..._visibleUsers.map((u) => Text(
-                        u.uid == widget.currentUser.uid ? '${u.name} (You)' : u.name,
-                        overflow: TextOverflow.ellipsis,
-                      )),
-                    ];
-                  },
-                ),
-              ] else ...[
-                Row(
-                  children: [
-                    const Text('View Calendar Of: ', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      width: 280,
-                      child: DropdownButtonFormField<String?>(
-                        value: _selectedMemberUid,
-                        decoration: InputDecoration(
-                          prefixIcon: const Icon(Icons.person_search, size: 20),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                        ),
-                        items: [
-                          const DropdownMenuItem(
-                            value: null,
-                            child: Text('All Members'),
-                          ),
-                          ..._visibleUsers.map((u) => DropdownMenuItem(
-                            value: u.uid,
-                            child: Row(
-                              children: [
-                                CircleAvatar(
-                                  radius: 12,
-                                  backgroundColor: _getRoleColor(u.role).withOpacity(0.15),
-                                  child: Text(
-                                    u.name.isNotEmpty ? u.name[0].toUpperCase() : '?',
-                                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: _getRoleColor(u.role)),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Text(
-                                        u.uid == widget.currentUser.uid ? '${u.name} (You)' : u.name,
-                                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                      Text(
-                                        u.role.label,
-                                        style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          )),
-                        ],
-                        onChanged: (value) {
-                          setState(() => _selectedMemberUid = value);
-                        },
-                        selectedItemBuilder: (context) {
-                          return [
-                            const Text('All Members'),
-                            ..._visibleUsers.map((u) => Text(
-                              u.uid == widget.currentUser.uid ? '${u.name} (You)' : u.name,
-                              overflow: TextOverflow.ellipsis,
-                            )),
-                          ];
-                        },
-                      ),
-                    ),
-                    if (_selectedMemberUid != null) ...[
-                      const SizedBox(width: 8),
-                      TextButton.icon(
-                        onPressed: () => setState(() => _selectedMemberUid = null),
-                        icon: const Icon(Icons.clear, size: 16),
-                        label: const Text('Show All', style: TextStyle(fontSize: 12)),
-                        style: TextButton.styleFrom(
-                          foregroundColor: Colors.orange.shade700,
-                          visualDensity: VisualDensity.compact,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ],
+              _buildCalendarHierarchyFilter(),
             ],
             const SizedBox(height: 12),
             // Existing filters - responsive layout
