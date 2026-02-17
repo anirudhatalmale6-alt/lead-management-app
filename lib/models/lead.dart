@@ -214,6 +214,14 @@ class Lead {
   String groupId;
   String createdBy;
 
+  // Creator's role (stored at creation time)
+  String submitterRole;
+
+  // Assignment & Tagging
+  String assignedTo;       // Email of user this lead is assigned to
+  String taggedManager;    // Email of tagged manager
+  List<String> followers;  // List of user emails who can see this lead
+
   Lead({
     required this.id,
     required this.clientName,
@@ -249,9 +257,14 @@ class Lead {
     this.groupId = '',
     this.createdBy = '',
     this.lastUpdatedBy = '',
+    this.submitterRole = '',
+    this.assignedTo = '',
+    this.taggedManager = '',
+    List<String>? followers,
     DateTime? createdAt,
     DateTime? updatedAt,
-  })  : createdAt = createdAt ?? DateTime.now(),
+  })  : followers = followers ?? [],
+        createdAt = createdAt ?? DateTime.now(),
         updatedAt = updatedAt ?? DateTime.now();
 
   factory Lead.fromFirestore(DocumentSnapshot doc) {
@@ -297,6 +310,10 @@ class Lead {
       groupId: data['group_id'] ?? '',
       createdBy: data['created_by'] ?? '',
       lastUpdatedBy: data['last_updated_by'] ?? '',
+      submitterRole: data['submitter_role'] ?? '',
+      assignedTo: data['assigned_to'] ?? '',
+      taggedManager: data['tagged_manager'] ?? '',
+      followers: List<String>.from(data['followers'] ?? []),
       createdAt: _parseTimestamp(data['created_at']) ?? DateTime.now(),
       updatedAt: _parseTimestamp(data['updated_at']) ?? DateTime.now(),
     );
@@ -341,6 +358,10 @@ class Lead {
       'group_id': groupId,
       'created_by': createdBy,
       'last_updated_by': lastUpdatedBy,
+      'submitter_role': submitterRole,
+      'assigned_to': assignedTo,
+      'tagged_manager': taggedManager,
+      'followers': followers,
       'created_at': Timestamp.fromDate(createdAt),
       'updated_at': FieldValue.serverTimestamp(),
     };

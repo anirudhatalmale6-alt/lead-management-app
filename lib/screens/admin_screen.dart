@@ -37,6 +37,23 @@ class _AdminScreenState extends State<AdminScreen>
     return user.role == UserRole.manager;
   }
 
+  /// Whether current user is SuperAdmin (for destructive actions like delete user)
+  bool get _isSuperAdmin {
+    final user = widget.currentUser;
+    if (user == null) return false;
+    return user.role == UserRole.superAdmin;
+  }
+
+  /// Whether current user can see Role and User tabs (only Admin and SuperAdmin)
+  bool get _canSeeAllTabs {
+    final user = widget.currentUser;
+    if (user == null) return false;
+    return user.role == UserRole.superAdmin || user.role == UserRole.admin;
+  }
+
+  /// Number of tabs based on user role
+  int get _tabCount => _canSeeAllTabs ? 4 : 2;
+
   // Mock data
   List<Map<String, dynamic>> _mockTeams = [];
   List<Map<String, dynamic>> _mockGroups = [];
@@ -44,12 +61,19 @@ class _AdminScreenState extends State<AdminScreen>
   List<AppUser> _mockUsers = [];
   List<Map<String, dynamic>> _allUsers = [];
 
+  // Cached team/group name lookups for display
+  Map<String, String> _teamNameCache = {}; // id -> name
+  Map<String, String> _groupNameCache = {}; // id -> name
+
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    // Tab count based on user role: Admin/SuperAdmin see all 4 tabs, others see only 2 (Team, Group)
+    _tabController = TabController(length: _tabCount, vsync: this);
     _initMockData();
     _loadUsersFromFirestore();
+    _loadGroupsFromFirestore();
+    _loadTeamGroupNameCache();
   }
 
   void _initMockData() {
@@ -134,6 +158,8 @@ class _AdminScreenState extends State<AdminScreen>
                 country: (u['country'] ?? '') as String?,
                 address: (u['address'] ?? '') as String?,
                 tag: (u['tag'] ?? '') as String?,
+                teamId: (u['team_id'] ?? '') as String?,
+                groupId: (u['group_id'] ?? '') as String?,
               );
             }).toList();
             // Use Firestore users if available, keep mock as fallback
@@ -146,6 +172,65 @@ class _AdminScreenState extends State<AdminScreen>
     }
   }
 
+  Future<void> _loadGroupsFromFirestore() async {
+    if (_useMockData) return;
+    try {
+      final snapshot = await FirebaseFirestore.instance.collection('groups').get();
+      if (mounted && snapshot.docs.isNotEmpty) {
+        setState(() {
+          _mockGroups = snapshot.docs.map((doc) {
+            final data = doc.data();
+            return {
+              'id': doc.id,
+              'name': data['name'] ?? '',
+              'team_id': data['team_id'],
+              'team_name': data['team_name'] ?? 'N/A',
+              'manager_uid': data['manager_uid'],
+              'manager_name': data['manager_name'] ?? 'N/A',
+              'tl_uid': data['tl_uid'],
+              'tl_name': data['tl_name'] ?? 'N/A',
+              'coordinator_uid': data['coordinator_uid'],
+              'coordinator_name': data['coordinator_name'] ?? 'N/A',
+              'members': List<String>.from(data['members'] ?? []),
+              'member_names': List<String>.from(data['member_names'] ?? []),
+              'status': data['status'] ?? true,
+              'created_at': data['created_at'] != null
+                  ? (data['created_at'] as Timestamp).toDate()
+                  : DateTime.now(),
+            };
+          }).toList();
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading groups: $e');
+    }
+  }
+
+  Future<void> _loadTeamGroupNameCache() async {
+    try {
+      final teams = await _firestoreService.getTeams();
+      final groups = await _firestoreService.getGroups();
+      if (mounted) {
+        setState(() {
+          _teamNameCache = {for (var t in teams) t['id'] as String: t['name'] as String? ?? ''};
+          _groupNameCache = {for (var g in groups) g['id'] as String: g['name'] as String? ?? ''};
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading team/group cache: $e');
+    }
+  }
+
+  String _getTeamName(String? teamId) {
+    if (teamId == null || teamId.isEmpty) return '-';
+    return _teamNameCache[teamId] ?? '-';
+  }
+
+  String _getGroupName(String? groupId) {
+    if (groupId == null || groupId.isEmpty) return '-';
+    return _groupNameCache[groupId] ?? '-';
+  }
+
   @override
   void dispose() {
     _tabController.dispose();
@@ -154,6 +239,28 @@ class _AdminScreenState extends State<AdminScreen>
 
   @override
   Widget build(BuildContext context) {
+    // Build tabs based on user role
+    final List<Tab> tabs = [
+      const Tab(icon: Icon(Icons.group_work), text: 'Team'),
+      const Tab(icon: Icon(Icons.workspaces), text: 'Group'),
+    ];
+    final List<Widget> tabViews = [
+      _buildTeamTab(),
+      _buildGroupTab(),
+    ];
+
+    // Only Admin and SuperAdmin can see Role and User/Member/Emp tabs
+    if (_canSeeAllTabs) {
+      tabs.addAll([
+        const Tab(icon: Icon(Icons.admin_panel_settings), text: 'Role'),
+        const Tab(icon: Icon(Icons.people), text: 'User/Member/Emp'),
+      ]);
+      tabViews.addAll([
+        _buildRoleTab(),
+        _buildUserTab(),
+      ]);
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Admin Menu'),
@@ -161,22 +268,12 @@ class _AdminScreenState extends State<AdminScreen>
         bottom: TabBar(
           controller: _tabController,
           isScrollable: true,
-          tabs: const [
-            Tab(icon: Icon(Icons.group_work), text: 'Team'),
-            Tab(icon: Icon(Icons.workspaces), text: 'Group'),
-            Tab(icon: Icon(Icons.admin_panel_settings), text: 'Role'),
-            Tab(icon: Icon(Icons.people), text: 'User/Member/Emp'),
-          ],
+          tabs: tabs,
         ),
       ),
       body: TabBarView(
         controller: _tabController,
-        children: [
-          _buildTeamTab(),
-          _buildGroupTab(),
-          _buildRoleTab(),
-          _buildUserTab(),
-        ],
+        children: tabViews,
       ),
     );
   }
@@ -340,9 +437,9 @@ class _AdminScreenState extends State<AdminScreen>
                       validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
                     ),
                     const SizedBox(height: 12),
-                    _buildUserDropdown('Select Manager', selectedManager, (v) => setDialogState(() => selectedManager = v), ['manager', 'admin', 'super_admin']),
+                    _buildUserDropdown('Select Manager', selectedManager, (v) => setDialogState(() => selectedManager = v), ['manager']),
                     const SizedBox(height: 12),
-                    _buildUserDropdown('Select TL', selectedTL, (v) => setDialogState(() => selectedTL = v), ['team_lead', 'coordinator', 'manager']),
+                    _buildUserDropdown('Select TL', selectedTL, (v) => setDialogState(() => selectedTL = v), ['team_lead']),
                     const SizedBox(height: 12),
                     _buildUserDropdown('Select Admin', selectedAdmin, (v) => setDialogState(() => selectedAdmin = v), ['admin', 'super_admin']),
                     const SizedBox(height: 12),
@@ -441,9 +538,9 @@ class _AdminScreenState extends State<AdminScreen>
                     ),
                   ),
                   const SizedBox(height: 16),
-                  _buildUserDropdown('Select Manager', selectedManager, (v) => setDialogState(() => selectedManager = v), ['manager', 'admin', 'super_admin']),
+                  _buildUserDropdown('Select Manager', selectedManager, (v) => setDialogState(() => selectedManager = v), ['manager']),
                   const SizedBox(height: 16),
-                  _buildUserDropdown('Select TL', selectedTL, (v) => setDialogState(() => selectedTL = v), ['team_lead', 'coordinator', 'manager']),
+                  _buildUserDropdown('Select TL', selectedTL, (v) => setDialogState(() => selectedTL = v), ['team_lead']),
                   const SizedBox(height: 16),
                   _buildUserDropdown('Select Admin', selectedAdmin, (v) => setDialogState(() => selectedAdmin = v), ['admin', 'super_admin']),
                   const SizedBox(height: 16),
@@ -572,57 +669,7 @@ class _AdminScreenState extends State<AdminScreen>
               ),
             ),
             Expanded(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: SingleChildScrollView(
-                  child: DataTable(
-                    columns: const [
-                      DataColumn(label: Text('ID')),
-                      DataColumn(label: Text('Group Name')),
-                      DataColumn(label: Text('Team')),
-                      DataColumn(label: Text('Manager')),
-                      DataColumn(label: Text('Team Leader')),
-                      DataColumn(label: Text('Coordinator')),
-                      DataColumn(label: Text('Members / Employees')),
-                      DataColumn(label: Text('Status')),
-                      DataColumn(label: Text('Created At')),
-                      DataColumn(label: Text('Options')),
-                    ],
-                    rows: _mockGroups.asMap().entries.map((entry) {
-                      final idx = entry.key + 1;
-                      final grp = entry.value;
-                      // Get member names for display
-                      final memberDisplay = grp['member_names'] != null
-                          ? (grp['member_names'] as List).join(', ')
-                          : (grp['members'] as List?)?.map((uid) => _getUserNameByUid(uid as String) ?? uid).join(', ') ?? '';
-                      return DataRow(cells: [
-                        DataCell(SelectableText('$idx')),
-                        DataCell(SelectableText(grp['name'] ?? '')),
-                        DataCell(SelectableText(grp['team_name'] ?? 'N/A')),
-                        DataCell(SelectableText(grp['manager_name'] ?? _getUserNameByUid(grp['manager_uid']) ?? 'N/A')),
-                        DataCell(SelectableText(grp['tl_name'] ?? _getUserNameByUid(grp['tl_uid']) ?? 'N/A')),
-                        DataCell(SelectableText(grp['coordinator_name'] ?? _getUserNameByUid(grp['coordinator_uid']) ?? 'N/A')),
-                        DataCell(SizedBox(
-                          width: 200,
-                          child: SelectableText(memberDisplay.isNotEmpty ? memberDisplay : 'N/A', maxLines: 2),
-                        )),
-                        DataCell(_buildStatusChip(grp['status'] ?? false)),
-                        DataCell(SelectableText(grp['created_at'] != null ? dateFormat.format(grp['created_at']) : '')),
-                        DataCell(_canModify
-                          ? Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(icon: const Icon(Icons.edit, size: 18), onPressed: () => _showEditGroupDialog(grp)),
-                                IconButton(icon: const Icon(Icons.delete, size: 18, color: Colors.red), onPressed: () => _confirmDeleteGroup(grp['id'], grp['name'])),
-                              ],
-                            )
-                          : const Text('-', style: TextStyle(color: Colors.grey)),
-                        ),
-                      ]);
-                    }).toList(),
-                  ),
-                ),
-              ),
+              child: _useMockData ? _buildMockGroupTable(dateFormat) : _buildFirestoreGroupTable(dateFormat),
             ),
           ],
         ),
@@ -638,6 +685,128 @@ class _AdminScreenState extends State<AdminScreen>
             ),
           ),
       ],
+    );
+  }
+
+  Widget _buildMockGroupTable(DateFormat dateFormat) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: SingleChildScrollView(
+        child: DataTable(
+          columns: const [
+            DataColumn(label: Text('ID')),
+            DataColumn(label: Text('Group Name')),
+            DataColumn(label: Text('Team')),
+            DataColumn(label: Text('Manager')),
+            DataColumn(label: Text('Team Leader')),
+            DataColumn(label: Text('Coordinator')),
+            DataColumn(label: Text('Members / Employees')),
+            DataColumn(label: Text('Status')),
+            DataColumn(label: Text('Created At')),
+            DataColumn(label: Text('Options')),
+          ],
+          rows: _mockGroups.asMap().entries.map((entry) {
+            final idx = entry.key + 1;
+            final grp = entry.value;
+            final memberDisplay = grp['member_names'] != null
+                ? (grp['member_names'] as List).join(', ')
+                : (grp['members'] as List?)?.map((uid) => _getUserNameByUid(uid as String) ?? uid).join(', ') ?? '';
+            return DataRow(cells: [
+              DataCell(SelectableText('$idx')),
+              DataCell(SelectableText(grp['name'] ?? '')),
+              DataCell(SelectableText(grp['team_name'] ?? 'N/A')),
+              DataCell(SelectableText(grp['manager_name'] ?? _getUserNameByUid(grp['manager_uid']) ?? 'N/A')),
+              DataCell(SelectableText(grp['tl_name'] ?? _getUserNameByUid(grp['tl_uid']) ?? 'N/A')),
+              DataCell(SelectableText(grp['coordinator_name'] ?? _getUserNameByUid(grp['coordinator_uid']) ?? 'N/A')),
+              DataCell(SizedBox(
+                width: 200,
+                child: SelectableText(memberDisplay.isNotEmpty ? memberDisplay : 'N/A', maxLines: 2),
+              )),
+              DataCell(_buildStatusChip(grp['status'] ?? false)),
+              DataCell(SelectableText(grp['created_at'] != null ? dateFormat.format(grp['created_at']) : '')),
+              DataCell(_canModify
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(icon: const Icon(Icons.edit, size: 18), onPressed: () => _showEditGroupDialog(grp)),
+                      IconButton(icon: const Icon(Icons.delete, size: 18, color: Colors.red), onPressed: () => _confirmDeleteGroup(grp['id'], grp['name'])),
+                    ],
+                  )
+                : const Text('-', style: TextStyle(color: Colors.grey)),
+              ),
+            ]);
+          }).toList(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFirestoreGroupTable(DateFormat dateFormat) {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance.collection('groups').snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) return Center(child: Text('Error: ${snapshot.error}'));
+        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+        final docs = snapshot.data?.docs ?? [];
+        if (docs.isEmpty) return const Center(child: Text('No groups found. Click "Add Group" to create one.'));
+
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: SingleChildScrollView(
+            child: DataTable(
+              columns: const [
+                DataColumn(label: Text('ID')),
+                DataColumn(label: Text('Group Name')),
+                DataColumn(label: Text('Team')),
+                DataColumn(label: Text('Manager')),
+                DataColumn(label: Text('Team Leader')),
+                DataColumn(label: Text('Coordinator')),
+                DataColumn(label: Text('Members / Employees')),
+                DataColumn(label: Text('Status')),
+                DataColumn(label: Text('Created At')),
+                DataColumn(label: Text('Options')),
+              ],
+              rows: docs.asMap().entries.map((entry) {
+                final idx = entry.key + 1;
+                final doc = entry.value;
+                final data = doc.data() as Map<String, dynamic>;
+                data['id'] = doc.id;
+                final memberDisplay = data['member_names'] != null
+                    ? (data['member_names'] as List).join(', ')
+                    : (data['members'] as List?)?.map((uid) => _getUserNameByUid(uid as String) ?? uid).join(', ') ?? '';
+                DateTime? createdAt;
+                if (data['created_at'] != null) {
+                  createdAt = (data['created_at'] as Timestamp).toDate();
+                }
+                return DataRow(cells: [
+                  DataCell(SelectableText('$idx')),
+                  DataCell(SelectableText(data['name'] ?? '')),
+                  DataCell(SelectableText(data['team_name'] ?? 'N/A')),
+                  DataCell(SelectableText(data['manager_name'] ?? 'N/A')),
+                  DataCell(SelectableText(data['tl_name'] ?? 'N/A')),
+                  DataCell(SelectableText(data['coordinator_name'] ?? 'N/A')),
+                  DataCell(SizedBox(
+                    width: 200,
+                    child: SelectableText(memberDisplay.isNotEmpty ? memberDisplay : 'N/A', maxLines: 2),
+                  )),
+                  DataCell(_buildStatusChip(data['status'] ?? false)),
+                  DataCell(SelectableText(createdAt != null ? dateFormat.format(createdAt) : '')),
+                  DataCell(_canModify
+                    ? Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(icon: const Icon(Icons.edit, size: 18), onPressed: () => _showEditGroupDialog(data)),
+                          IconButton(icon: const Icon(Icons.delete, size: 18, color: Colors.red), onPressed: () => _confirmDeleteGroup(data['id'], data['name'])),
+                        ],
+                      )
+                    : const Text('-', style: TextStyle(color: Colors.grey)),
+                  ),
+                ]);
+              }).toList(),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -711,15 +880,15 @@ class _AdminScreenState extends State<AdminScreen>
                     },
                   ),
                   const SizedBox(height: 16),
-                  _buildUserDropdown('Manager', manager, (v) => setDialogState(() => manager = v), ['manager', 'admin', 'super_admin']),
+                  _buildUserDropdown('Manager', manager, (v) => setDialogState(() => manager = v), ['manager']),
                   const SizedBox(height: 16),
-                  _buildUserDropdown('Team Leader (TL)', tl, (v) => setDialogState(() => tl = v), ['team_lead', 'coordinator', 'manager']),
+                  _buildUserDropdown('Team Leader (TL)', tl, (v) => setDialogState(() => tl = v), ['team_lead']),
                   const SizedBox(height: 16),
-                  _buildUserDropdown('Coordinator', coordinator, (v) => setDialogState(() => coordinator = v), ['coordinator', 'team_lead', 'member']),
+                  _buildUserDropdown('Coordinator', coordinator, (v) => setDialogState(() => coordinator = v), ['coordinator']),
                   const SizedBox(height: 16),
                   const Text('Select Members / Employees:', style: TextStyle(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 8),
-                  // Show all users
+                  // Show only users with 'Member' role
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
@@ -731,14 +900,14 @@ class _AdminScreenState extends State<AdminScreen>
                       child: Wrap(
                         spacing: 8,
                         runSpacing: 4,
-                        children: _mockUsers.map((u) {
+                        children: _mockUsers.where((u) => u.role == UserRole.member).map((u) {
                           final selected = selectedMembers.contains(u.uid);
                           return FilterChip(
                             avatar: CircleAvatar(
                               radius: 12,
                               child: Text(u.name.isNotEmpty ? u.name[0] : '?', style: const TextStyle(fontSize: 10)),
                             ),
-                            label: Text('${u.name} (${u.role.label})'),
+                            label: Text(u.name),
                             selected: selected,
                             onSelected: (v) => setDialogState(() {
                               if (v) selectedMembers.add(u.uid);
@@ -908,11 +1077,11 @@ class _AdminScreenState extends State<AdminScreen>
                     },
                   ),
                   const SizedBox(height: 16),
-                  _buildUserDropdown('Manager', manager, (v) => setDialogState(() => manager = v), ['manager', 'admin', 'super_admin']),
+                  _buildUserDropdown('Manager', manager, (v) => setDialogState(() => manager = v), ['manager']),
                   const SizedBox(height: 16),
-                  _buildUserDropdown('Team Leader (TL)', tl, (v) => setDialogState(() => tl = v), ['team_lead', 'coordinator', 'manager']),
+                  _buildUserDropdown('Team Leader (TL)', tl, (v) => setDialogState(() => tl = v), ['team_lead']),
                   const SizedBox(height: 16),
-                  _buildUserDropdown('Coordinator', coordinator, (v) => setDialogState(() => coordinator = v), ['coordinator', 'team_lead', 'member']),
+                  _buildUserDropdown('Coordinator', coordinator, (v) => setDialogState(() => coordinator = v), ['coordinator']),
                   const SizedBox(height: 16),
                   Row(
                     children: [
@@ -942,14 +1111,14 @@ class _AdminScreenState extends State<AdminScreen>
                       child: Wrap(
                         spacing: 8,
                         runSpacing: 4,
-                        children: _mockUsers.map((u) {
+                        children: _mockUsers.where((u) => u.role == UserRole.member).map((u) {
                           final selected = selectedMembers.contains(u.uid);
                           return FilterChip(
                             avatar: CircleAvatar(
                               radius: 12,
                               child: Text(u.name.isNotEmpty ? u.name[0] : '?', style: const TextStyle(fontSize: 10)),
                             ),
-                            label: Text('${u.name} (${u.role.label})'),
+                            label: Text(u.name),
                             selected: selected,
                             onSelected: (v) => setDialogState(() {
                               if (v) selectedMembers.add(u.uid);
@@ -1070,11 +1239,11 @@ class _AdminScreenState extends State<AdminScreen>
                 const SizedBox(height: 12),
                 Expanded(
                   child: ListView(
-                    children: _mockUsers.map((u) {
+                    children: _mockUsers.where((u) => u.role == UserRole.member).map((u) {
                       final selected = tempMembers.contains(u.uid);
                       return CheckboxListTile(
                         title: Text(u.name),
-                        subtitle: Text('${u.email} • ${u.role.label}'),
+                        subtitle: Text(u.email),
                         value: selected,
                         onChanged: (v) => setDialogState(() {
                           if (v == true) tempMembers.add(u.uid);
@@ -1113,9 +1282,17 @@ class _AdminScreenState extends State<AdminScreen>
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () {
-              setState(() => _mockGroups.removeWhere((g) => g['id'] == id));
+            onPressed: () async {
               Navigator.pop(ctx);
+              if (_useMockData) {
+                setState(() => _mockGroups.removeWhere((g) => g['id'] == id));
+              } else {
+                try {
+                  await FirebaseFirestore.instance.collection('groups').doc(id).delete();
+                } catch (e) {
+                  debugPrint('Error deleting group: $e');
+                }
+              }
               _showSnackBar('Group deleted');
             },
             child: const Text('Delete'),
@@ -1313,13 +1490,56 @@ class _AdminScreenState extends State<AdminScreen>
   // ===========================================================================
   Widget _buildUserTab() {
     final dateFormat = DateFormat('dd MMM yyyy HH:mm');
+    // Count users with no team assigned
+    final usersWithoutTeam = _mockUsers.where((u) =>
+      u.teamId == null || u.teamId!.isEmpty
+    ).length;
+
     return Stack(
       children: [
         Column(
           children: [
             Padding(
               padding: const EdgeInsets.all(16),
-              child: Text('User / Member / Emp', style: Theme.of(context).textTheme.titleLarge),
+              child: Column(
+                children: [
+                  Text('User / Member / Emp', style: Theme.of(context).textTheme.titleLarge),
+                  if (usersWithoutTeam > 0) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.shade50,
+                        border: Border.all(color: Colors.orange.shade300),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.warning_amber, color: Colors.orange.shade700, size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              '$usersWithoutTeam user(s) have no team assigned. Click on a user to edit and assign their team. Role-based lead visibility requires team assignment.',
+                              style: TextStyle(fontSize: 12, color: Colors.orange.shade800),
+                            ),
+                          ),
+                          if (_canModify) ...[
+                            const SizedBox(width: 8),
+                            TextButton.icon(
+                              onPressed: _syncAllLeadsWithUserTeams,
+                              icon: const Icon(Icons.sync, size: 16),
+                              label: const Text('Sync Leads', style: TextStyle(fontSize: 12)),
+                              style: TextButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
             Expanded(
               child: _useMockData ? _buildMockUserTable(dateFormat) : _buildFirestoreUserTable(dateFormat),
@@ -1345,16 +1565,14 @@ class _AdminScreenState extends State<AdminScreen>
       scrollDirection: Axis.horizontal,
       child: SingleChildScrollView(
         child: DataTable(
-          showCheckboxColumn: true,
+          showCheckboxColumn: false,
           columns: const [
-            DataColumn(label: Text('', )),  // Checkbox column
             DataColumn(label: Text('ID')),
             DataColumn(label: Text('Full Name')),
             DataColumn(label: Text('Mobile')),
             DataColumn(label: Text('Email')),
-            DataColumn(label: Text('City')),
-            DataColumn(label: Text('Country')),
-            DataColumn(label: Text('Address')),
+            DataColumn(label: Text('Team')),
+            DataColumn(label: Text('Group')),
             DataColumn(label: Text('Tag')),
             DataColumn(label: Text('Role')),
             DataColumn(label: Text('Last Login')),
@@ -1363,17 +1581,24 @@ class _AdminScreenState extends State<AdminScreen>
           rows: _mockUsers.asMap().entries.map((entry) {
             final idx = entry.key + 1;
             final u = entry.value;
+            final hasNoTeam = u.teamId == null || u.teamId!.isEmpty;
             return DataRow(
+              color: hasNoTeam ? WidgetStateProperty.all(Colors.orange.shade50) : null,
               onSelectChanged: (_) => _showEditMemberDialog(u),
               cells: [
-                DataCell(Checkbox(value: false, onChanged: (_) {})),
                 DataCell(SelectableText('$idx')),
                 DataCell(SelectableText(u.name)),
                 DataCell(SelectableText(u.phone ?? '')),
                 DataCell(SelectableText(u.email)),
-                DataCell(SelectableText(u.city ?? '')),
-                DataCell(SelectableText(u.country ?? '')),
-                DataCell(SelectableText(u.address ?? '')),
+                DataCell(hasNoTeam
+                  ? Row(children: [
+                      Icon(Icons.warning_amber, size: 14, color: Colors.orange.shade700),
+                      const SizedBox(width: 4),
+                      Text('Not Set', style: TextStyle(color: Colors.orange.shade700, fontSize: 12, fontWeight: FontWeight.w600)),
+                    ])
+                  : SelectableText(_getTeamName(u.teamId)),
+                ),
+                DataCell(SelectableText(_getGroupName(u.groupId))),
                 DataCell(SelectableText(u.tag ?? '')),
                 DataCell(SelectableText(u.role.label)),
                 DataCell(SelectableText(u.lastLoginAt != null ? dateFormat.format(u.lastLoginAt!) : '')),
@@ -1406,16 +1631,14 @@ class _AdminScreenState extends State<AdminScreen>
           scrollDirection: Axis.horizontal,
           child: SingleChildScrollView(
             child: DataTable(
-              showCheckboxColumn: true,
+              showCheckboxColumn: false,
               columns: const [
-                DataColumn(label: Text('')),  // Checkbox column
                 DataColumn(label: Text('ID')),
                 DataColumn(label: Text('Full Name')),
                 DataColumn(label: Text('Mobile')),
                 DataColumn(label: Text('Email')),
-                DataColumn(label: Text('City')),
-                DataColumn(label: Text('Country')),
-                DataColumn(label: Text('Address')),
+                DataColumn(label: Text('Team')),
+                DataColumn(label: Text('Group')),
                 DataColumn(label: Text('Tag')),
                 DataColumn(label: Text('Role')),
                 DataColumn(label: Text('Last Login')),
@@ -1424,17 +1647,24 @@ class _AdminScreenState extends State<AdminScreen>
               rows: users.asMap().entries.map((entry) {
                 final idx = entry.key + 1;
                 final u = entry.value;
+                final hasNoTeam = u.teamId == null || u.teamId!.isEmpty;
                 return DataRow(
+                  color: hasNoTeam ? WidgetStateProperty.all(Colors.orange.shade50) : null,
                   onSelectChanged: (_) => _showEditMemberDialog(u),
                   cells: [
-                    DataCell(Checkbox(value: false, onChanged: (_) {})),
                     DataCell(SelectableText('$idx')),
                     DataCell(SelectableText(u.name)),
                     DataCell(SelectableText(u.phone ?? '')),
                     DataCell(SelectableText(u.email)),
-                    DataCell(SelectableText(u.city ?? '')),
-                    DataCell(SelectableText(u.country ?? '')),
-                    DataCell(SelectableText(u.address ?? '')),
+                    DataCell(hasNoTeam
+                      ? Row(children: [
+                          Icon(Icons.warning_amber, size: 14, color: Colors.orange.shade700),
+                          const SizedBox(width: 4),
+                          Text('Not Set', style: TextStyle(color: Colors.orange.shade700, fontSize: 12, fontWeight: FontWeight.w600)),
+                        ])
+                      : SelectableText(_getTeamName(u.teamId)),
+                    ),
+                    DataCell(SelectableText(_getGroupName(u.groupId))),
                     DataCell(SelectableText(u.tag ?? '')),
                     DataCell(SelectableText(u.role.label)),
                     DataCell(SelectableText(u.lastLoginAt != null ? dateFormat.format(u.lastLoginAt!) : '')),
@@ -1449,7 +1679,7 @@ class _AdminScreenState extends State<AdminScreen>
     );
   }
 
-  void _showAddMemberDialog() {
+  void _showAddMemberDialog() async {
     final formKey = GlobalKey<FormState>();
     final firstNameCtrl = TextEditingController();
     final lastNameCtrl = TextEditingController();
@@ -1465,11 +1695,30 @@ class _AdminScreenState extends State<AdminScreen>
     bool sendWelcome = false;
     bool status = true;
     bool isLoading = false;
+    bool showPassword = false;
+    String? selectedTeamId;
+    String? selectedGroupId;
+
+    // Load teams and groups for dropdowns
+    List<Map<String, dynamic>> teams = [];
+    List<Map<String, dynamic>> groups = [];
+    try {
+      teams = await _firestoreService.getTeams();
+      groups = await _firestoreService.getGroups();
+    } catch (_) {}
+
+    if (!mounted) return;
 
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx2, setDialogState) => AlertDialog(
+        builder: (ctx2, setDialogState) {
+          // Filter groups by selected team
+          final filteredGroups = selectedTeamId != null
+              ? groups.where((g) => g['team_id'] == selectedTeamId).toList()
+              : groups;
+
+          return AlertDialog(
           title: const Text('Add Member'),
           content: SizedBox(
             width: 500,
@@ -1531,7 +1780,52 @@ class _AdminScreenState extends State<AdminScreen>
                       onChanged: (v) => setDialogState(() => selectedRole = v ?? UserRole.member),
                     ),
                     const SizedBox(height: 12),
-                    TextFormField(controller: passwordCtrl, decoration: const InputDecoration(labelText: 'Password'), obscureText: true),
+                    // Team dropdown
+                    DropdownButtonFormField<String>(
+                      value: selectedTeamId,
+                      decoration: const InputDecoration(labelText: 'Assign Team'),
+                      items: [
+                        const DropdownMenuItem<String>(value: null, child: Text('No Team')),
+                        ...teams.map((t) => DropdownMenuItem<String>(
+                          value: t['id'] as String,
+                          child: Text(t['name'] as String? ?? t['id'] as String),
+                        )),
+                      ],
+                      onChanged: (v) => setDialogState(() {
+                        selectedTeamId = v;
+                        // Reset group if team changes
+                        if (selectedGroupId != null) {
+                          final groupStillValid = groups.any((g) => g['id'] == selectedGroupId && g['team_id'] == v);
+                          if (!groupStillValid) selectedGroupId = null;
+                        }
+                      }),
+                    ),
+                    const SizedBox(height: 12),
+                    // Group dropdown
+                    DropdownButtonFormField<String>(
+                      value: selectedGroupId,
+                      decoration: const InputDecoration(labelText: 'Assign Group'),
+                      items: [
+                        const DropdownMenuItem<String>(value: null, child: Text('No Group')),
+                        ...filteredGroups.map((g) => DropdownMenuItem<String>(
+                          value: g['id'] as String,
+                          child: Text(g['name'] as String? ?? g['id'] as String),
+                        )),
+                      ],
+                      onChanged: (v) => setDialogState(() => selectedGroupId = v),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: passwordCtrl,
+                      decoration: InputDecoration(
+                        labelText: 'Password',
+                        suffixIcon: IconButton(
+                          icon: Icon(showPassword ? Icons.visibility_off : Icons.visibility),
+                          onPressed: () => setDialogState(() => showPassword = !showPassword),
+                        ),
+                      ),
+                      obscureText: !showPassword,
+                    ),
                     const SizedBox(height: 12),
                     CheckboxListTile(
                       title: const Text('Send welcome message'),
@@ -1575,13 +1869,25 @@ class _AdminScreenState extends State<AdminScreen>
                       country: countryCtrl.text.trim(),
                       address: addressCtrl.text.trim(),
                       tag: tagCtrl.text.trim(),
+                      teamId: selectedTeamId,
+                      groupId: selectedGroupId,
                     ));
                   });
                   Navigator.pop(ctx2);
                   _showSnackBar('Member added');
                 } else {
                   try {
-                    final cred = await _authService.signUp(emailCtrl.text.trim(), passwordCtrl.text.trim());
+                    // Check for duplicate email before creating
+                    final existingUsers = await FirebaseFirestore.instance
+                        .collection('users')
+                        .where('email', isEqualTo: emailCtrl.text.trim())
+                        .get();
+                    if (existingUsers.docs.isNotEmpty) {
+                      setDialogState(() => isLoading = false);
+                      _showSnackBar('This email is already registered. Please use a different email.', isError: true);
+                      return;
+                    }
+                    final cred = await _authService.signUpWithoutSwitching(emailCtrl.text.trim(), passwordCtrl.text.trim());
                     await FirebaseFirestore.instance.collection('users').doc(cred.user!.uid).set({
                       'display_name': fullName,
                       'first_name': firstNameCtrl.text.trim(),
@@ -1595,8 +1901,11 @@ class _AdminScreenState extends State<AdminScreen>
                       'country': countryCtrl.text.trim(),
                       'address': addressCtrl.text.trim(),
                       'tag': tagCtrl.text.trim(),
+                      'team_id': selectedTeamId ?? '',
+                      'group_id': selectedGroupId ?? '',
                       'created_at': FieldValue.serverTimestamp(),
                     });
+                    _loadUsersFromFirestore();
                     Navigator.pop(ctx2);
                     _showSnackBar('Member added');
                   } catch (e) {
@@ -1608,12 +1917,13 @@ class _AdminScreenState extends State<AdminScreen>
               child: isLoading ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Save'),
             ),
           ],
-        ),
+        );
+        },
       ),
     );
   }
 
-  void _showEditMemberDialog(AppUser user) {
+  void _showEditMemberDialog(AppUser user) async {
     final firstNameCtrl = TextEditingController(text: user.firstName.isNotEmpty ? user.firstName : user.name.split(' ').first);
     final lastNameCtrl = TextEditingController(text: user.lastName.isNotEmpty ? user.lastName : (user.name.split(' ').length > 1 ? user.name.split(' ').skip(1).join(' ') : ''));
     final mobileCtrl = TextEditingController(text: user.phone ?? '');
@@ -1626,13 +1936,31 @@ class _AdminScreenState extends State<AdminScreen>
     bool makeAdmin = user.isAdmin;
     bool status = user.isActive;
     bool isLoading = false;
+    String? selectedTeamId = (user.teamId != null && user.teamId!.isNotEmpty) ? user.teamId : null;
+    String? selectedGroupId = (user.groupId != null && user.groupId!.isNotEmpty) ? user.groupId : null;
+
+    // Load teams and groups for dropdowns
+    List<Map<String, dynamic>> teams = [];
+    List<Map<String, dynamic>> groups = [];
+    try {
+      teams = await _firestoreService.getTeams();
+      groups = await _firestoreService.getGroups();
+    } catch (_) {}
+
+    if (!mounted) return;
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx2, setSheetState) => Padding(
+        builder: (ctx2, setSheetState) {
+          // Filter groups by selected team
+          final filteredGroups = selectedTeamId != null
+              ? groups.where((g) => g['team_id'] == selectedTeamId).toList()
+              : groups;
+
+          return Padding(
           padding: EdgeInsets.only(left: 24, right: 24, top: 24, bottom: MediaQuery.of(ctx2).viewInsets.bottom + 24),
           child: SingleChildScrollView(
             child: Column(
@@ -1666,6 +1994,40 @@ class _AdminScreenState extends State<AdminScreen>
                   onChanged: (v) => setSheetState(() => selectedRole = v ?? user.role),
                 ),
                 const SizedBox(height: 12),
+                // Team dropdown
+                DropdownButtonFormField<String>(
+                  value: selectedTeamId,
+                  decoration: const InputDecoration(labelText: 'Team'),
+                  items: [
+                    const DropdownMenuItem<String>(value: null, child: Text('No Team')),
+                    ...teams.map((t) => DropdownMenuItem<String>(
+                      value: t['id'] as String,
+                      child: Text(t['name'] as String? ?? t['id'] as String),
+                    )),
+                  ],
+                  onChanged: (v) => setSheetState(() {
+                    selectedTeamId = v;
+                    if (selectedGroupId != null) {
+                      final groupStillValid = groups.any((g) => g['id'] == selectedGroupId && g['team_id'] == v);
+                      if (!groupStillValid) selectedGroupId = null;
+                    }
+                  }),
+                ),
+                const SizedBox(height: 12),
+                // Group dropdown
+                DropdownButtonFormField<String>(
+                  value: selectedGroupId,
+                  decoration: const InputDecoration(labelText: 'Group'),
+                  items: [
+                    const DropdownMenuItem<String>(value: null, child: Text('No Group')),
+                    ...filteredGroups.map((g) => DropdownMenuItem<String>(
+                      value: g['id'] as String,
+                      child: Text(g['name'] as String? ?? g['id'] as String),
+                    )),
+                  ],
+                  onChanged: (v) => setSheetState(() => selectedGroupId = v),
+                ),
+                const SizedBox(height: 12),
                 SwitchListTile(title: const Text('Status'), subtitle: Text(status ? 'Active' : 'Deactive'), value: status, onChanged: (v) => setSheetState(() => status = v), contentPadding: EdgeInsets.zero),
                 const SizedBox(height: 16),
                 SizedBox(
@@ -1682,6 +2044,7 @@ class _AdminScreenState extends State<AdminScreen>
                               name: fullName, firstName: firstNameCtrl.text.trim(), lastName: lastNameCtrl.text.trim(),
                               phone: mobileCtrl.text.trim(), city: cityCtrl.text.trim(), country: countryCtrl.text.trim(),
                               address: addressCtrl.text.trim(), tag: tagCtrl.text.trim(), role: selectedRole, isActive: status, isAdmin: makeAdmin,
+                              teamId: selectedTeamId ?? '', groupId: selectedGroupId ?? '',
                             );
                           }
                         });
@@ -1693,10 +2056,21 @@ class _AdminScreenState extends State<AdminScreen>
                             'display_name': fullName, 'first_name': firstNameCtrl.text.trim(), 'last_name': lastNameCtrl.text.trim(),
                             'phone': mobileCtrl.text.trim(), 'city': cityCtrl.text.trim(), 'country': countryCtrl.text.trim(),
                             'address': addressCtrl.text.trim(), 'tag': tagCtrl.text.trim(), 'role': selectedRole.toSnakeCase(),
-                            'is_active': status, 'is_admin': makeAdmin, 'updated_at': FieldValue.serverTimestamp(),
+                            'is_active': status, 'is_admin': makeAdmin,
+                            'team_id': selectedTeamId ?? '', 'group_id': selectedGroupId ?? '',
+                            'updated_at': FieldValue.serverTimestamp(),
                           });
+                          // Auto-backfill all leads owned by this user with new team/group
+                          await _backfillUserLeads(
+                            user.uid,
+                            user.email,
+                            selectedTeamId ?? '',
+                            selectedGroupId ?? '',
+                          );
+                          // Reload user list to reflect changes
+                          _loadUsersFromFirestore();
                           Navigator.pop(ctx2);
-                          _showSnackBar('Member updated');
+                          _showSnackBar('Member updated & leads synced');
                         } catch (e) {
                           setSheetState(() => isLoading = false);
                           _showSnackBar('Error: $e', isError: true);
@@ -1706,12 +2080,235 @@ class _AdminScreenState extends State<AdminScreen>
                     child: isLoading ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text('Save Changes'),
                   ),
                 ),
+                if (_isSuperAdmin) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: isLoading ? null : () {
+                        showDialog(
+                          context: ctx2,
+                          builder: (dCtx) => AlertDialog(
+                            title: const Text('Delete User'),
+                            content: Text('Are you sure you want to permanently delete "${user.name}"?\n\nThis action cannot be undone. All leads assigned to this user will need to be reassigned.'),
+                            actions: [
+                              TextButton(onPressed: () => Navigator.pop(dCtx), child: const Text('Cancel')),
+                              FilledButton(
+                                style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                                onPressed: () async {
+                                  Navigator.pop(dCtx);
+                                  setSheetState(() => isLoading = true);
+                                  try {
+                                    if (!_useMockData) {
+                                      await FirebaseFirestore.instance.collection('users').doc(user.uid).delete();
+                                    } else {
+                                      setState(() => _mockUsers.removeWhere((u) => u.uid == user.uid));
+                                    }
+                                    Navigator.pop(ctx2);
+                                    _showSnackBar('User "${user.name}" deleted');
+                                  } catch (e) {
+                                    setSheetState(() => isLoading = false);
+                                    _showSnackBar('Error deleting user: $e', isError: true);
+                                  }
+                                },
+                                child: const Text('Delete'),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.delete_forever, color: Colors.red),
+                      label: const Text('Delete User', style: TextStyle(color: Colors.red)),
+                      style: OutlinedButton.styleFrom(side: const BorderSide(color: Colors.red)),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
-        ),
+        );
+        },
       ),
     );
+  }
+
+  // ===========================================================================
+  // LEAD BACKFILL — auto-sync leads when user's team/group changes
+  // ===========================================================================
+
+  /// When a user's team/group is updated, backfill all their leads with the new IDs and names.
+  Future<void> _backfillUserLeads(String uid, String email, String teamId, String groupId) async {
+    try {
+      // Look up team and group names
+      String teamName = '';
+      String groupName = '';
+      if (teamId.isNotEmpty) {
+        teamName = _teamNameCache[teamId] ?? '';
+        if (teamName.isEmpty) {
+          final teams = await _firestoreService.getTeams();
+          final team = teams.where((t) => t['id'] == teamId).firstOrNull;
+          if (team != null) teamName = team['name'] ?? '';
+        }
+      }
+      if (groupId.isNotEmpty) {
+        groupName = _groupNameCache[groupId] ?? '';
+        if (groupName.isEmpty) {
+          final groups = await _firestoreService.getGroups();
+          final group = groups.where((g) => g['id'] == groupId).firstOrNull;
+          if (group != null) groupName = group['name'] ?? '';
+        }
+      }
+
+      final db = FirebaseFirestore.instance;
+      final batch = db.batch();
+      int count = 0;
+
+      // Update leads where owner_uid matches
+      final ownedLeads = await db.collection('leads').where('owner_uid', isEqualTo: uid).get();
+      for (final doc in ownedLeads.docs) {
+        batch.update(doc.reference, {
+          'team_id': teamId,
+          'group_id': groupId,
+          'group_name': teamName,
+          'sub_group': groupName,
+        });
+        count++;
+      }
+
+      // Also update leads assigned to this user's email
+      if (email.isNotEmpty) {
+        final assignedLeads = await db.collection('leads').where('assigned_to', isEqualTo: email).get();
+        for (final doc in assignedLeads.docs) {
+          // Only update if not already covered by owner_uid query
+          if (!ownedLeads.docs.any((owned) => owned.id == doc.id)) {
+            batch.update(doc.reference, {
+              'team_id': teamId,
+              'group_id': groupId,
+              'group_name': teamName,
+              'sub_group': groupName,
+            });
+            count++;
+          }
+        }
+      }
+
+      if (count > 0) {
+        await batch.commit();
+        debugPrint('Backfilled $count leads for user $uid');
+      }
+    } catch (e) {
+      debugPrint('Error backfilling leads: $e');
+    }
+  }
+
+  /// Sync ALL leads in the system: for each lead, look up owner's team/group and update the lead.
+  Future<void> _syncAllLeadsWithUserTeams() async {
+    if (!_canModify) return;
+
+    // Show progress dialog
+    bool cancelled = false;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Syncing Leads...'),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Updating all leads with correct team/group assignments.\nThis may take a moment...'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () { cancelled = true; Navigator.pop(ctx); },
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+
+    try {
+      final db = FirebaseFirestore.instance;
+
+      // Load all users into a map: uid -> user data, email -> user data
+      final usersSnapshot = await db.collection('users').get();
+      final userByUid = <String, Map<String, dynamic>>{};
+      final userByEmail = <String, Map<String, dynamic>>{};
+      for (final doc in usersSnapshot.docs) {
+        final data = doc.data();
+        data['uid'] = doc.id;
+        userByUid[doc.id] = data;
+        final email = (data['email'] ?? '') as String;
+        if (email.isNotEmpty) userByEmail[email.toLowerCase()] = data;
+      }
+
+      // Load team/group name caches
+      final teams = await _firestoreService.getTeams();
+      final groups = await _firestoreService.getGroups();
+      final teamNames = {for (var t in teams) t['id'] as String: t['name'] as String? ?? ''};
+      final groupNames = {for (var g in groups) g['id'] as String: g['name'] as String? ?? ''};
+
+      // Batch-update all leads
+      final leadsSnapshot = await db.collection('leads').get();
+      final batch = db.batch();
+      int updatedCount = 0;
+
+      for (final doc in leadsSnapshot.docs) {
+        if (cancelled) break;
+        final data = doc.data();
+        final ownerUid = (data['owner_uid'] ?? '') as String;
+        final assignedTo = (data['assigned_to'] ?? '') as String;
+
+        // Find the user who owns/is assigned this lead
+        Map<String, dynamic>? ownerUser;
+        if (ownerUid.isNotEmpty) ownerUser = userByUid[ownerUid];
+        if (ownerUser == null && assignedTo.isNotEmpty) {
+          ownerUser = userByEmail[assignedTo.toLowerCase()];
+        }
+
+        if (ownerUser != null) {
+          final userTeamId = (ownerUser['team_id'] ?? '') as String;
+          final userGroupId = (ownerUser['group_id'] ?? '') as String;
+          final teamName = teamNames[userTeamId] ?? '';
+          final groupName = groupNames[userGroupId] ?? '';
+
+          // Check if update needed
+          final currentTeamId = (data['team_id'] ?? '') as String;
+          final currentGroupId = (data['group_id'] ?? '') as String;
+          final currentGroupName = (data['group_name'] ?? '') as String;
+          final currentSubGroup = (data['sub_group'] ?? '') as String;
+
+          if (userTeamId.isNotEmpty && (currentTeamId != userTeamId ||
+              currentGroupId != userGroupId ||
+              currentGroupName != teamName ||
+              currentSubGroup != groupName)) {
+            batch.update(doc.reference, {
+              'team_id': userTeamId,
+              'group_id': userGroupId,
+              'group_name': teamName,
+              'sub_group': groupName,
+            });
+            updatedCount++;
+          }
+        }
+      }
+
+      if (!cancelled && updatedCount > 0) {
+        await batch.commit();
+      }
+
+      if (mounted && !cancelled) {
+        Navigator.of(context, rootNavigator: true).pop();
+        _showSnackBar('Synced $updatedCount leads with user team/group assignments');
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        _showSnackBar('Error syncing leads: $e', isError: true);
+      }
+    }
   }
 
   // ===========================================================================

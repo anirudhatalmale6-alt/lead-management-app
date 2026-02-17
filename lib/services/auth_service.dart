@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/user.dart';
 
@@ -43,6 +44,33 @@ class AuthService {
       email: email,
       password: password,
     );
+  }
+
+  /// Creates a new user account WITHOUT switching the current session.
+  /// Uses a secondary Firebase App to avoid logging out the admin.
+  Future<UserCredential> signUpWithoutSwitching(String email, String password) async {
+    FirebaseApp? secondaryApp;
+    try {
+      // Create or get a secondary Firebase app
+      try {
+        secondaryApp = Firebase.app('SecondaryApp');
+      } catch (_) {
+        secondaryApp = await Firebase.initializeApp(
+          name: 'SecondaryApp',
+          options: Firebase.app().options,
+        );
+      }
+      final secondaryAuth = FirebaseAuth.instanceFor(app: secondaryApp);
+      final cred = await secondaryAuth.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      // Sign out from secondary app so it doesn't interfere
+      await secondaryAuth.signOut();
+      return cred;
+    } catch (e) {
+      rethrow;
+    }
   }
 
   /// Signs the current user out of Firebase Auth.

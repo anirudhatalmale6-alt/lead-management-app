@@ -161,6 +161,8 @@ class Meeting {
   DateTime? updatedAt;
   final String? organizerUid; // For calendar permission filtering
   final String? assignedTo; // User assigned to handle this meeting
+  final String? teamId; // Team ID for role-based visibility
+  final String? groupId; // Group ID for role-based visibility
 
   // Computed property for time range display
   String get timeRange {
@@ -190,6 +192,8 @@ class Meeting {
     this.updatedAt,
     this.organizerUid,
     this.assignedTo,
+    this.teamId,
+    this.groupId,
   });
 
   factory Meeting.fromFirestore(DocumentSnapshot doc) {
@@ -216,6 +220,8 @@ class Meeting {
       updatedAt: (data['updated_at'] as Timestamp?)?.toDate(),
       organizerUid: data['organizer_uid'] ?? data['created_by'],
       assignedTo: data['assigned_to'],
+      teamId: data['team_id'],
+      groupId: data['group_id'],
     );
   }
 
@@ -238,6 +244,8 @@ class Meeting {
       'updated_at': updatedAt != null ? Timestamp.fromDate(updatedAt!) : null,
       'organizer_uid': organizerUid ?? createdBy,
       'assigned_to': assignedTo,
+      'team_id': teamId,
+      'group_id': groupId,
     };
   }
 }

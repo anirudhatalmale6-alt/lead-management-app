@@ -83,12 +83,13 @@ class _AppShellState extends State<AppShell> {
         label: 'Calendar',
       ),
     ];
-    // Admin tab is visible to all users (view-only for non-admin)
+    // Admin tab visible to ALL roles (with restricted access for non-admins)
     items.add(const NavigationDestination(
       icon: Icon(Icons.admin_panel_settings_outlined),
       selectedIcon: Icon(Icons.admin_panel_settings),
       label: 'Admin',
     ));
+    // Email & Calendar Settings only visible to Admin/SuperAdmin
     if (widget.isAdmin) {
       items.addAll([
         const NavigationDestination(
@@ -187,12 +188,13 @@ class _AppShellState extends State<AppShell> {
         label: Text('Calendar'),
       ),
     ];
-    // Admin tab is visible to all users (view-only for non-admin)
+    // Admin tab visible to ALL roles (with restricted access for non-admins)
     items.add(const NavigationRailDestination(
       icon: Icon(Icons.admin_panel_settings_outlined),
       selectedIcon: Icon(Icons.admin_panel_settings),
       label: Text('Admin'),
     ));
+    // Email & Calendar Settings only visible to Admin/SuperAdmin
     if (widget.isAdmin) {
       items.addAll([
         const NavigationRailDestination(

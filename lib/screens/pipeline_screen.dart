@@ -24,7 +24,7 @@ class PipelineScreen extends StatefulWidget {
 }
 
 enum PipelineViewType { kanban, table }
-enum SortField { createdAt, name, rating, stage, health }
+enum SortField { followUpDate, createdAt, name, rating, stage, health }
 enum SortOrder { asc, desc }
 
 class _PipelineScreenState extends State<PipelineScreen> {
@@ -33,29 +33,72 @@ class _PipelineScreenState extends State<PipelineScreen> {
   PipelineViewType _viewType = PipelineViewType.kanban;
 
   // Sorting state
-  SortField _sortField = SortField.createdAt;
-  SortOrder _sortOrder = SortOrder.desc; // Latest first by default
+  SortField _sortField = SortField.followUpDate;
+  SortOrder _sortOrder = SortOrder.asc; // Soonest follow-up first by default
 
   // Scroll controller for Kanban view
   final ScrollController _kanbanScrollController = ScrollController();
   bool _canScrollLeft = false;
   bool _canScrollRight = true;
 
-  // Table view column configuration
+  // Scroll controller for Table view
+  final ScrollController _tableScrollController = ScrollController();
+  bool _tableCanScrollLeft = false;
+  bool _tableCanScrollRight = true;
+
+  // Table view column configuration - All available columns
   static const List<String> _defaultColumns = [
     'Name',
     'Business',
+    'Mobile',
+    'WhatsApp',
+    'Email',
     'Stage',
     'Health',
     'Product',
     'Rating',
     'Activity',
     'Payment',
+    'Country',
+    'State',
     'City',
+    'Follow-up Date',
+    'Follow-up Time',
+    'Meeting Date',
+    'Meeting Time',
+    'Team',
+    'Group',
+    'Submitter',
+    'Updated By',
+    'Updated At',
     'Created',
+    'Notes',
+    'Comment',
   ];
   List<String> _tableColumns = List.from(_defaultColumns);
-  Set<String> _hiddenColumns = {}; // Columns that are hidden
+  // Hide some columns by default to avoid clutter
+  Set<String> _hiddenColumns = {'WhatsApp', 'Email', 'Country', 'State', 'Meeting Time', 'Notes', 'Comment'};
+
+  // Column widths for resizable columns (stored width overrides auto-calculated)
+  final Map<String, double> _columnWidths = {};
+
+  // Default column widths
+  double _getColumnWidth(String column, double tableWidth) {
+    // If user has resized, use that width
+    if (_columnWidths.containsKey(column)) {
+      return _columnWidths[column]!;
+    }
+    // Otherwise calculate based on column type
+    final totalCols = _visibleColumns.length;
+    final wideCount = _visibleColumns.where((c) => c == 'Name' || c == 'Business' || c == 'Email').length;
+    final normalCount = totalCols - wideCount;
+    final unitWidth = (tableWidth - 32) / (wideCount * 1.8 + normalCount);
+
+    // Wider columns for certain fields
+    if (column == 'Name' || column == 'Business') return unitWidth * 1.8;
+    if (column == 'Email') return unitWidth * 1.8;
+    return unitWidth.clamp(80.0, 200.0); // Min 80, max 200
+  }
 
   // Get visible columns only
   List<String> get _visibleColumns =>
@@ -80,9 +123,11 @@ class _PipelineScreenState extends State<PipelineScreen> {
   void initState() {
     super.initState();
     _kanbanScrollController.addListener(_updateScrollIndicators);
+    _tableScrollController.addListener(_updateTableScrollIndicators);
     // Initialize scroll indicators after first frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _updateScrollIndicators();
+      _updateTableScrollIndicators();
     });
   }
 
@@ -95,10 +140,21 @@ class _PipelineScreenState extends State<PipelineScreen> {
     });
   }
 
+  void _updateTableScrollIndicators() {
+    if (!_tableScrollController.hasClients) return;
+    final maxScroll = _tableScrollController.position.maxScrollExtent;
+    setState(() {
+      _tableCanScrollLeft = _tableScrollController.offset > 10;
+      _tableCanScrollRight = maxScroll > 10 &&
+          _tableScrollController.offset < (maxScroll - 10);
+    });
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
     _kanbanScrollController.dispose();
+    _tableScrollController.dispose();
     super.dispose();
   }
 
@@ -154,7 +210,7 @@ class _PipelineScreenState extends State<PipelineScreen> {
           results.where((l) => l.interestedInProduct == _filterProduct).toList();
     }
     if (_filterRating != null) {
-      results = results.where((l) => l.rating == _filterRating).toList();
+      results = results.where((l) => l.rating >= _filterRating!).toList();
     }
 
     // Date range (applies to createdAt)
@@ -188,6 +244,18 @@ class _PipelineScreenState extends State<PipelineScreen> {
     sorted.sort((a, b) {
       int comparison;
       switch (_sortField) {
+        case SortField.followUpDate:
+          // Sort by next follow-up date (leads with follow-up first, then by date)
+          if (a.nextFollowUpDate == null && b.nextFollowUpDate == null) {
+            comparison = 0;
+          } else if (a.nextFollowUpDate == null) {
+            comparison = 1; // null dates go to the end
+          } else if (b.nextFollowUpDate == null) {
+            comparison = -1;
+          } else {
+            comparison = a.nextFollowUpDate!.compareTo(b.nextFollowUpDate!);
+          }
+          break;
         case SortField.createdAt:
           comparison = a.createdAt.compareTo(b.createdAt);
           break;
@@ -679,13 +747,14 @@ class _PipelineScreenState extends State<PipelineScreen> {
                   underline: const SizedBox(),
                   isDense: true,
                   items: const [
+                    DropdownMenuItem(value: SortField.followUpDate, child: Text('Follow-up')),
                     DropdownMenuItem(value: SortField.createdAt, child: Text('Created')),
                     DropdownMenuItem(value: SortField.name, child: Text('Name')),
                     DropdownMenuItem(value: SortField.rating, child: Text('Rating')),
                     DropdownMenuItem(value: SortField.stage, child: Text('Stage')),
                     DropdownMenuItem(value: SortField.health, child: Text('Health')),
                   ],
-                  onChanged: (v) => setState(() => _sortField = v ?? SortField.createdAt),
+                  onChanged: (v) => setState(() => _sortField = v ?? SortField.followUpDate),
                 ),
                 const SizedBox(width: 8),
                 IconButton(
@@ -721,42 +790,83 @@ class _PipelineScreenState extends State<PipelineScreen> {
         Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) {
-              // Minimum table width to prevent column overlap
-              const minTableWidth = 900.0;
+              // Calculate table width: sum of all visible column widths
+              // Use a generous minimum to prevent column overlap
+              final visibleCount = _visibleColumns.length;
+              final calculatedMin = visibleCount * 130.0; // ~130px per column
+              final minTableWidth = calculatedMin.clamp(900.0, 3000.0);
               final tableWidth = constraints.maxWidth < minTableWidth
                   ? minTableWidth
                   : constraints.maxWidth;
 
-              return Scrollbar(
-                thumbVisibility: true,
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: SizedBox(
+              return Stack(
+                children: [
+                  // Main table content
+                  SelectionArea(
+                    child: Scrollbar(
+                      controller: _tableScrollController,
+                      thumbVisibility: true,
+                      child: SingleChildScrollView(
+                        controller: _tableScrollController,
+                        scrollDirection: Axis.horizontal,
+                        child: SizedBox(
                     width: tableWidth,
                     child: Column(
                       children: [
-                        // Column header row
+                        // Column header row with resizable columns
                         Container(
                           color: Colors.grey.shade200,
                           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
                           child: Row(
                             children: List.generate(_visibleColumns.length, (index) {
                               final col = _visibleColumns[index];
-                              final totalCols = _visibleColumns.length;
-                              final wideCount = _visibleColumns.where((c) => c == 'Name' || c == 'Business').length;
-                              final normalCount = totalCols - wideCount;
-                              final unitWidth = (tableWidth - 32) / (wideCount * 2 + normalCount);
-                              final colWidth = (col == 'Name' || col == 'Business') ? unitWidth * 2 : unitWidth;
-                              return SizedBox(
-                                width: colWidth,
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                                  child: Text(
-                                    col,
-                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-                                    overflow: TextOverflow.ellipsis,
+                              final colWidth = _getColumnWidth(col, tableWidth);
+                              final isLast = index == _visibleColumns.length - 1;
+
+                              return Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  SizedBox(
+                                    width: colWidth - (isLast ? 0 : 8), // Account for resize handle
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                                      child: Text(
+                                        col,
+                                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
                                   ),
-                                ),
+                                  // Resize handle (not on last column)
+                                  if (!isLast)
+                                    MouseRegion(
+                                      cursor: SystemMouseCursors.resizeColumn,
+                                      child: GestureDetector(
+                                        onHorizontalDragUpdate: (details) {
+                                          setState(() {
+                                            final currentWidth = _columnWidths[col] ?? _getColumnWidth(col, tableWidth);
+                                            final newWidth = (currentWidth + details.delta.dx).clamp(60.0, 400.0);
+                                            _columnWidths[col] = newWidth;
+                                          });
+                                        },
+                                        child: Container(
+                                          width: 8,
+                                          height: 24,
+                                          color: Colors.transparent,
+                                          child: Center(
+                                            child: Container(
+                                              width: 2,
+                                              height: 16,
+                                              decoration: BoxDecoration(
+                                                color: Colors.grey.shade400,
+                                                borderRadius: BorderRadius.circular(1),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                ],
                               );
                             }),
                           ),
@@ -785,17 +895,15 @@ class _PipelineScreenState extends State<PipelineScreen> {
                                         ),
                                         child: Row(
                                           children: [
-                                            for (final col in _visibleColumns)
+                                            for (int i = 0; i < _visibleColumns.length; i++)
                                               Builder(builder: (context) {
-                                                final totalCols = _visibleColumns.length;
-                                                final wideCount = _visibleColumns.where((c) => c == 'Name' || c == 'Business').length;
-                                                final normalCount = totalCols - wideCount;
-                                                final unitWidth = (tableWidth - 32) / (wideCount * 2 + normalCount);
-                                                final colWidth = (col == 'Name' || col == 'Business') ? unitWidth * 2 : unitWidth;
+                                                final col = _visibleColumns[i];
+                                                final colWidth = _getColumnWidth(col, tableWidth);
+                                                final isLast = i == _visibleColumns.length - 1;
                                                 return SizedBox(
                                                   width: colWidth,
                                                   child: Padding(
-                                                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                                                    padding: EdgeInsets.only(left: 4, right: isLast ? 4 : 12),
                                                     child: _buildTableCell(col, lead, healthColor, stageColor, dateFormat),
                                                   ),
                                                 );
@@ -811,6 +919,83 @@ class _PipelineScreenState extends State<PipelineScreen> {
                     ),
                   ),
                 ),
+                  ),
+                  ),
+                  // Left scroll arrow
+                  if (_tableCanScrollLeft)
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      bottom: 0,
+                      child: GestureDetector(
+                        onTap: () {
+                          _tableScrollController.animateTo(
+                            (_tableScrollController.offset - 300).clamp(0.0, _tableScrollController.position.maxScrollExtent),
+                            duration: const Duration(milliseconds: 300),
+                            curve: Curves.easeInOut,
+                          );
+                        },
+                        child: Container(
+                          width: 40,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [Colors.white, Colors.white.withOpacity(0)],
+                              begin: Alignment.centerLeft,
+                              end: Alignment.centerRight,
+                            ),
+                          ),
+                          child: Center(
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.blue.shade600,
+                                borderRadius: BorderRadius.circular(20),
+                                boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 4)],
+                              ),
+                              child: const Icon(Icons.chevron_left, color: Colors.white, size: 24),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  // Right scroll arrow
+                  if (_tableCanScrollRight)
+                    Positioned(
+                      right: 0,
+                      top: 0,
+                      bottom: 0,
+                      child: GestureDetector(
+                        onTap: () {
+                          _tableScrollController.animateTo(
+                            (_tableScrollController.offset + 300).clamp(0.0, _tableScrollController.position.maxScrollExtent),
+                            duration: const Duration(milliseconds: 300),
+                            curve: Curves.easeInOut,
+                          );
+                        },
+                        child: Container(
+                          width: 40,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [Colors.white.withOpacity(0), Colors.white],
+                              begin: Alignment.centerLeft,
+                              end: Alignment.centerRight,
+                            ),
+                          ),
+                          child: Center(
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.blue.shade600,
+                                borderRadius: BorderRadius.circular(20),
+                                boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 4)],
+                              ),
+                              child: const Icon(Icons.chevron_right, color: Colors.white, size: 24),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               );
             },
           ),
@@ -828,6 +1013,18 @@ class _PipelineScreenState extends State<PipelineScreen> {
             style: const TextStyle(fontWeight: FontWeight.w500));
       case 'Business':
         return Text(lead.clientBusinessName, overflow: TextOverflow.ellipsis);
+      case 'Mobile':
+        return Text(lead.clientMobile,
+            style: const TextStyle(fontSize: 12),
+            overflow: TextOverflow.ellipsis);
+      case 'WhatsApp':
+        return Text(lead.clientWhatsApp,
+            style: const TextStyle(fontSize: 12),
+            overflow: TextOverflow.ellipsis);
+      case 'Email':
+        return Text(lead.clientEmail,
+            style: const TextStyle(fontSize: 12),
+            overflow: TextOverflow.ellipsis);
       case 'Stage':
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -876,13 +1073,68 @@ class _PipelineScreenState extends State<PipelineScreen> {
         return Text(lead.paymentStatus.label,
             style: const TextStyle(fontSize: 12),
             overflow: TextOverflow.ellipsis);
+      case 'Country':
+        return Text(lead.country,
+            style: const TextStyle(fontSize: 12),
+            overflow: TextOverflow.ellipsis);
+      case 'State':
+        return Text(lead.state,
+            style: const TextStyle(fontSize: 12),
+            overflow: TextOverflow.ellipsis);
       case 'City':
         return Text(lead.clientCity,
             style: const TextStyle(fontSize: 12),
             overflow: TextOverflow.ellipsis);
+      case 'Follow-up Date':
+        return Text(
+            lead.nextFollowUpDate != null
+                ? dateFormat.format(lead.nextFollowUpDate!)
+                : '-',
+            style: TextStyle(fontSize: 11, color: Colors.grey.shade600));
+      case 'Follow-up Time':
+        return Text(lead.nextFollowUpTime.isNotEmpty ? lead.nextFollowUpTime : '-',
+            style: TextStyle(fontSize: 11, color: Colors.grey.shade600));
+      case 'Meeting Date':
+        return Text(
+            lead.meetingDate != null
+                ? dateFormat.format(lead.meetingDate!)
+                : '-',
+            style: TextStyle(fontSize: 11, color: Colors.grey.shade600));
+      case 'Meeting Time':
+        return Text(lead.meetingTime.isNotEmpty ? lead.meetingTime : '-',
+            style: TextStyle(fontSize: 11, color: Colors.grey.shade600));
+      case 'Team':
+        return Text(lead.groupName.isNotEmpty ? lead.groupName : '-',
+            style: const TextStyle(fontSize: 12),
+            overflow: TextOverflow.ellipsis);
+      case 'Group':
+        return Text(lead.subGroup.isNotEmpty ? lead.subGroup : '-',
+            style: const TextStyle(fontSize: 12),
+            overflow: TextOverflow.ellipsis);
+      case 'Submitter':
+        return Text(lead.submitterName.isNotEmpty ? lead.submitterName : '-',
+            style: const TextStyle(fontSize: 12),
+            overflow: TextOverflow.ellipsis);
+      case 'Updated By':
+        return Text(lead.lastUpdatedBy.isNotEmpty ? lead.lastUpdatedBy : '-',
+            style: const TextStyle(fontSize: 12),
+            overflow: TextOverflow.ellipsis);
+      case 'Updated At':
+        return Text(dateFormat.format(lead.updatedAt),
+            style: TextStyle(fontSize: 11, color: Colors.grey.shade600));
       case 'Created':
         return Text(dateFormat.format(lead.createdAt),
             style: TextStyle(fontSize: 11, color: Colors.grey.shade600));
+      case 'Notes':
+        return Text(lead.notes.isNotEmpty ? lead.notes : '-',
+            style: const TextStyle(fontSize: 12),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis);
+      case 'Comment':
+        return Text(lead.comment.isNotEmpty ? lead.comment : '-',
+            style: const TextStyle(fontSize: 12),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis);
       default:
         return const SizedBox();
     }
@@ -1070,9 +1322,11 @@ class _PipelineScreenState extends State<PipelineScreen> {
                               tempColumns = List.from(_defaultColumns);
                               tempHidden.clear();
                             });
+                            // Also reset column widths
+                            setState(() => _columnWidths.clear());
                           },
                           icon: const Icon(Icons.restart_alt, size: 18),
-                          label: const Text('Reset'),
+                          label: const Text('Reset All'),
                         ),
                         const Spacer(),
                         TextButton(
@@ -1731,6 +1985,95 @@ class _PipelineScreenState extends State<PipelineScreen> {
                     ),
                   ),
                 ],
+              ),
+            ],
+            // Next Follow-up Date
+            if (lead.nextFollowUpDate != null) ...[
+              const SizedBox(height: 2),
+              Row(
+                children: [
+                  Icon(Icons.event, size: 12, color: Colors.orange.shade600),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      'Follow-up: ${dateFormat.format(lead.nextFollowUpDate!)}',
+                      style: TextStyle(fontSize: 10, color: Colors.orange.shade600),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            // City
+            if (lead.clientCity.isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Row(
+                children: [
+                  Icon(Icons.location_city, size: 12, color: Colors.grey.shade500),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      lead.clientCity,
+                      style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            // Team/Group
+            if (lead.groupName.isNotEmpty || lead.subGroup.isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Row(
+                children: [
+                  Icon(Icons.group, size: 12, color: Colors.grey.shade500),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      [lead.groupName, lead.subGroup].where((s) => s.isNotEmpty).join(' / '),
+                      style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            // Updated By
+            if (lead.lastUpdatedBy.isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Row(
+                children: [
+                  Icon(Icons.person, size: 12, color: Colors.grey.shade500),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      'By: ${lead.lastUpdatedBy}',
+                      style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            // Latest Follow-up Comment (from notes or comment)
+            if (lead.comment.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  lead.comment,
+                  style: TextStyle(fontSize: 10, color: Colors.grey.shade700, fontStyle: FontStyle.italic),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
             ],
           ],

@@ -9,6 +9,8 @@ import '../models/user.dart';
 import '../services/lead_service.dart';
 import '../services/email_service.dart';
 import '../services/calendar_service.dart';
+import '../services/user_service.dart';
+import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/send_email_dialog.dart';
 import '../widgets/schedule_meeting_dialog.dart';
@@ -35,6 +37,8 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
   final LeadService _leadService = LeadService();
   final EmailService _emailService = EmailService();
   final CalendarService _calendarService = CalendarService();
+  final UserService _userService = UserService();
+  final FirestoreService _firestoreService = FirestoreService();
   List<LeadHistory> _history = [];
   List<EmailLog> _emailLogs = [];
   List<Meeting> _meetings = [];
@@ -43,11 +47,23 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
   bool _loadingEmails = true;
   bool _loadingMeetings = true;
 
+  // Users for assignment dropdowns
+  List<AppUser> _allUsers = [];
+  List<AppUser> _employees = [];
+  List<AppUser> _managers = [];
+  List<AppUser> _teamLeads = [];
+  bool _loadingUsers = true;
+
+  // Teams and Groups for lookup
+  Map<String, String> _teamNames = {}; // id -> name
+  Map<String, String> _groupNames = {}; // id -> name
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
     _loadHistory();
+    _loadUsers();
     _loadEmailLogs();
     _loadMeetings();
   }
@@ -143,6 +159,32 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
     }
   }
 
+  Future<void> _loadUsers() async {
+    try {
+      final allUsers = await _userService.getAllUsers();
+      // Also load teams and groups for name lookup
+      final teams = await _firestoreService.getTeams();
+      final groups = await _firestoreService.getGroups();
+
+      if (mounted) {
+        setState(() {
+          _allUsers = allUsers;
+          _employees = allUsers.where((u) => u.role == UserRole.member).toList();
+          _managers = allUsers.where((u) => u.role == UserRole.manager).toList();
+          _teamLeads = allUsers.where((u) => u.role == UserRole.teamLead).toList();
+          // Build team/group name maps
+          _teamNames = {for (var t in teams) t['id'] as String: t['name'] as String? ?? ''};
+          _groupNames = {for (var g in groups) g['id'] as String: g['name'] as String? ?? ''};
+          _loadingUsers = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _loadingUsers = false);
+      }
+    }
+  }
+
   void _openSendEmailDialog() {
     if (widget.currentUser == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -159,6 +201,7 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
     ).then((sent) {
       if (sent == true) {
         _loadEmailLogs();
+        _loadHistory();
       }
     });
   }
@@ -248,14 +291,15 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
   }
 
   Widget _buildWideDetailsLayout(Lead lead, ColorScheme cs) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Row(
+    return SelectionArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Left Column - Main Info
+          // Left Column - Main Info (expanded to fill space)
           Expanded(
-            flex: 3,
+            flex: 5,
             child: Column(
               children: [
                 // Status badges row
@@ -301,29 +345,36 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
                 const SizedBox(height: 12),
 
                 // Submitter Info
-                _sectionCard('Submitter Info', [
+                _sectionCard('Creator Info', [
                   _infoRow('Name',
                       lead.submitterName.isNotEmpty ? lead.submitterName : '-'),
                   _infoRow('Email',
                       lead.submitterEmail.isNotEmpty ? lead.submitterEmail : '-'),
                   _infoRow('Mobile',
                       lead.submitterMobile.isNotEmpty ? lead.submitterMobile : '-'),
-                  _infoRow(
-                      'Group', lead.groupName.isNotEmpty ? lead.groupName : '-'),
-                  _infoRow(
-                      'Sub Group', lead.subGroup.isNotEmpty ? lead.subGroup : '-'),
+                  _infoRow('Team', _resolveTeamName(lead)),
+                  _infoRow('Group', _resolveGroupName(lead)),
+                  _infoRow('Role', lead.submitterRole.isNotEmpty ? lead.submitterRole : (lead.createdBy.isNotEmpty ? '-' : widget.currentUser?.role.label ?? '-')),
                 ]),
+                const SizedBox(height: 12),
+
+                // Quick Follow-up Update Card (Activity) - MOVED TO LEFT
+                SelectionContainer.disabled(child: _buildQuickFollowUpUpdateCard(lead, cs)),
+                const SizedBox(height: 12),
+
+                // Assignment & Tagging Card - MOVED TO LEFT
+                SelectionContainer.disabled(child: _buildAssignmentCard(lead, cs)),
               ],
             ),
           ),
           const SizedBox(width: 16),
-          // Right Column - Quick Actions & Stats
+          // Right Column - Quick Actions & Stats (compact)
           Expanded(
-            flex: 2,
+            flex: 3,
             child: Column(
               children: [
                 // Quick Actions Card
-                _buildQuickActionsCard(lead, cs),
+                SelectionContainer.disabled(child: _buildQuickActionsCard(lead, cs)),
                 const SizedBox(height: 12),
 
                 // Meeting Info Card
@@ -354,11 +405,13 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
           ),
         ],
       ),
+      ),
     );
   }
 
   Widget _buildNarrowDetailsLayout(Lead lead, ColorScheme cs) {
-    return ListView(
+    return SelectionArea(
+      child: ListView(
       padding: const EdgeInsets.all(16),
       children: [
         // Status badges row
@@ -378,7 +431,7 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
         const SizedBox(height: 20),
 
         // Quick Actions Card
-        _buildQuickActionsCard(lead, cs),
+        SelectionContainer.disabled(child: _buildQuickActionsCard(lead, cs)),
         const SizedBox(height: 12),
 
         // Client Information
@@ -408,6 +461,10 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
         _buildFollowUpCard(lead, cs),
         const SizedBox(height: 12),
 
+        // Quick Follow-up Update
+        SelectionContainer.disabled(child: _buildQuickFollowUpUpdateCard(lead, cs)),
+        const SizedBox(height: 12),
+
         // Notes & Comment
         _sectionCard('Notes & Comments', [
           _infoRow('Notes', lead.notes.isNotEmpty ? lead.notes : '-'),
@@ -416,7 +473,7 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
         const SizedBox(height: 12),
 
         // Submitter Info
-        _sectionCard('Submitter Info', [
+        _sectionCard('Creator Info', [
           _infoRow('Name',
               lead.submitterName.isNotEmpty ? lead.submitterName : '-'),
           _infoRow('Email',
@@ -424,10 +481,15 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
           _infoRow('Mobile',
               lead.submitterMobile.isNotEmpty ? lead.submitterMobile : '-'),
           _infoRow(
-              'Group', lead.groupName.isNotEmpty ? lead.groupName : '-'),
+              'Team', lead.groupName.isNotEmpty ? lead.groupName : '-'),
           _infoRow(
-              'Sub Group', lead.subGroup.isNotEmpty ? lead.subGroup : '-'),
+              'Group', lead.subGroup.isNotEmpty ? lead.subGroup : '-'),
+          _infoRow('Role', lead.submitterRole.isNotEmpty ? lead.submitterRole : (lead.createdBy.isNotEmpty ? '-' : widget.currentUser?.role.label ?? '-')),
         ]),
+        const SizedBox(height: 12),
+
+        // Assignment & Tagging Card
+        SelectionContainer.disabled(child: _buildAssignmentCard(lead, cs)),
         const SizedBox(height: 12),
 
         // Timestamps & Meta
@@ -443,6 +505,7 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
         ]),
         const SizedBox(height: 24),
       ],
+      ),
     );
   }
 
@@ -718,6 +781,636 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
     );
   }
 
+  Widget _buildQuickFollowUpUpdateCard(Lead lead, ColorScheme cs) {
+    return Card(
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Colors.teal.withOpacity(0.1), Colors.white],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.teal.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(Icons.update, color: Colors.teal, size: 20),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text('Quick Followup Update',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+                // Quick update button
+                FilledButton.icon(
+                  onPressed: () => _showQuickUpdateDialog(lead),
+                  icon: const Icon(Icons.edit, size: 16),
+                  label: const Text('Update'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.teal,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // Status dropdowns row 1
+            Row(
+              children: [
+                Expanded(
+                  child: _buildQuickStatusBadge(
+                    'Rating',
+                    '${lead.rating}',
+                    Colors.blue,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _buildQuickStatusBadge(
+                    'Lead Health',
+                    lead.health.label,
+                    AppTheme.healthColor(lead.health.label),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            // Status dropdowns row 2
+            Row(
+              children: [
+                Expanded(
+                  child: _buildQuickStatusBadge(
+                    'Sales Stage',
+                    lead.stage.label,
+                    AppTheme.stageColor(lead.stage.label),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _buildQuickStatusBadge(
+                    'Activity State',
+                    lead.activityState.label,
+                    AppTheme.activityColor(lead.activityState.label),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            // Payment status
+            _buildQuickStatusBadge(
+              'Payment Status',
+              lead.paymentStatus.label,
+              AppTheme.paymentColor(lead.paymentStatus.label),
+            ),
+            const SizedBox(height: 12),
+
+            // Next follow-up date/time
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.grey.shade200),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.calendar_today, size: 18, color: Colors.teal.shade700),
+                  const SizedBox(width: 8),
+                  const Text('Next Followup: ', style: TextStyle(fontWeight: FontWeight.w500)),
+                  Expanded(
+                    child: Text(
+                      lead.nextFollowUpDate != null
+                          ? '${DateFormat('dd/MM/yyyy').format(lead.nextFollowUpDate!)}${lead.nextFollowUpTime.isNotEmpty ? ' at ${lead.nextFollowUpTime}' : ''}'
+                          : 'Not scheduled',
+                      style: TextStyle(
+                        color: lead.nextFollowUpDate != null ? Colors.teal.shade700 : Colors.grey,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Comment History section
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.amber.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.amber.shade200),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.history, size: 18, color: Colors.amber.shade800),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Comment History:',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.amber.shade800,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  if (_loadingHistory)
+                    const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(16),
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  else if (_history.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Text(
+                        'No comments yet',
+                        style: TextStyle(
+                          color: Colors.grey.shade600,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    )
+                  else
+                    ..._history.take(5).map((entry) => _buildCommentHistoryItem(entry)),
+                  if (_history.length > 5)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: TextButton(
+                        onPressed: () {
+                          _tabController.animateTo(1); // Go to History tab
+                        },
+                        child: Text(
+                          'View all ${_history.length} entries →',
+                          style: TextStyle(color: Colors.teal.shade700),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickStatusBadge(String label, String value, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              color: Colors.grey.shade600,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 13,
+              color: color,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCommentHistoryItem(LeadHistory entry) {
+    final dateStr = DateFormat('dd/MM/yy').format(entry.updatedAt);
+    final timeStr = DateFormat('HH:mm').format(entry.updatedAt);
+    final userName = entry.updatedBy.isNotEmpty
+        ? entry.updatedBy.split('@').first
+        : 'System';
+
+    // Get the comment/description text
+    String commentText = '';
+    if (entry.isActivityLog && entry.description != null && entry.description!.isNotEmpty) {
+      commentText = entry.description!;
+    } else if (entry.comment.isNotEmpty) {
+      commentText = entry.comment;
+    } else if (entry.changedFields.isNotEmpty) {
+      // Summarize field changes
+      final changes = entry.changedFields.entries.map((e) {
+        final fieldName = e.key.replaceAll('_', ' ');
+        return fieldName;
+      }).join(', ');
+      commentText = 'Updated: $changes';
+    }
+
+    if (commentText.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            commentText,
+            style: const TextStyle(fontSize: 13),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Icon(Icons.person, size: 12, color: Colors.grey.shade500),
+              const SizedBox(width: 4),
+              Text(
+                'by $userName',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(Icons.access_time, size: 12, color: Colors.grey.shade500),
+              const SizedBox(width: 4),
+              Text(
+                '$dateStr $timeStr',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.grey.shade500,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showQuickUpdateDialog(Lead lead) {
+    // Ensure rating is a valid dropdown value
+    const validRatings = [10, 20, 30, 40, 50, 60, 70, 80, 90];
+    int selectedRating = validRatings.contains(lead.rating) ? lead.rating : 10;
+    LeadHealth selectedHealth = lead.health;
+    LeadStage selectedStage = lead.stage;
+    ActivityState selectedActivity = lead.activityState;
+    PaymentStatus selectedPayment = lead.paymentStatus;
+    DateTime? selectedDate = lead.nextFollowUpDate;
+    TimeOfDay? selectedTime;
+    final commentController = TextEditingController();
+    if (lead.nextFollowUpTime.isNotEmpty) {
+      final parts = lead.nextFollowUpTime.split(':');
+      if (parts.length == 2) {
+        try {
+          selectedTime = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
+        } catch (_) {
+          // ignore bad time format
+        }
+      }
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx2, setDialogState) => AlertDialog(
+          title: const Text('Quick Update'),
+          content: SizedBox(
+            width: 450,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Rating dropdown
+                  DropdownButtonFormField<int>(
+                    value: selectedRating,
+                    decoration: const InputDecoration(
+                      labelText: 'Rating',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: validRatings
+                        .map((r) => DropdownMenuItem(value: r, child: Text('$r')))
+                        .toList(),
+                    onChanged: (v) => setDialogState(() => selectedRating = v ?? 10),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Lead Health dropdown
+                  DropdownButtonFormField<LeadHealth>(
+                    value: selectedHealth,
+                    decoration: const InputDecoration(
+                      labelText: 'Lead Health',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: LeadHealth.values
+                        .map((h) => DropdownMenuItem(value: h, child: Text(h.label)))
+                        .toList(),
+                    onChanged: (v) => setDialogState(() => selectedHealth = v ?? LeadHealth.warm),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Sales Stage dropdown
+                  DropdownButtonFormField<LeadStage>(
+                    value: selectedStage,
+                    decoration: const InputDecoration(
+                      labelText: 'Sales Stage',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: LeadStage.values
+                        .map((s) => DropdownMenuItem(value: s, child: Text(s.label)))
+                        .toList(),
+                    onChanged: (v) => setDialogState(() => selectedStage = v ?? LeadStage.newLead),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Activity State dropdown
+                  DropdownButtonFormField<ActivityState>(
+                    value: selectedActivity,
+                    decoration: const InputDecoration(
+                      labelText: 'Activity State',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: ActivityState.values
+                        .map((a) => DropdownMenuItem(value: a, child: Text(a.label)))
+                        .toList(),
+                    onChanged: (v) => setDialogState(() => selectedActivity = v ?? ActivityState.idle),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Payment Status dropdown
+                  DropdownButtonFormField<PaymentStatus>(
+                    value: selectedPayment,
+                    decoration: const InputDecoration(
+                      labelText: 'Payment Status',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: PaymentStatus.values
+                        .map((p) => DropdownMenuItem(value: p, child: Text(p.label)))
+                        .toList(),
+                    onChanged: (v) => setDialogState(() => selectedPayment = v ?? PaymentStatus.free),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Comment field (before follow-up section)
+                  TextField(
+                    controller: commentController,
+                    decoration: const InputDecoration(
+                      labelText: 'Comment',
+                      hintText: 'Add a comment or note...',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.comment, size: 20),
+                    ),
+                    maxLines: 2,
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Follow-up date/time section
+                  const Text('Next Follow-up:', style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            final date = await showDatePicker(
+                              context: ctx2,
+                              initialDate: selectedDate ?? DateTime.now(),
+                              firstDate: DateTime.now().subtract(const Duration(days: 30)),
+                              lastDate: DateTime.now().add(const Duration(days: 365)),
+                            );
+                            if (date != null) {
+                              setDialogState(() => selectedDate = date);
+                            }
+                          },
+                          icon: const Icon(Icons.calendar_today, size: 16),
+                          label: Text(
+                            selectedDate != null
+                                ? DateFormat('dd/MM/yyyy').format(selectedDate!)
+                                : 'Select Date',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            final time = await showTimePicker(
+                              context: ctx2,
+                              initialTime: selectedTime ?? TimeOfDay.now(),
+                            );
+                            if (time != null) {
+                              setDialogState(() => selectedTime = time);
+                            }
+                          },
+                          icon: const Icon(Icons.access_time, size: 16),
+                          label: Text(
+                            selectedTime != null
+                                ? selectedTime!.format(ctx2)
+                                : 'Select Time',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx2), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () async {
+                Navigator.pop(ctx2);
+                try {
+                  // Build update map with only changed fields
+                  final Map<String, dynamic> updates = {};
+
+                  if (selectedRating != lead.rating) {
+                    updates['rating'] = selectedRating;
+                  }
+                  if (selectedHealth != lead.health) {
+                    updates['health'] = selectedHealth.name;
+                  }
+                  if (selectedStage != lead.stage) {
+                    updates['stage'] = selectedStage.name;
+                  }
+                  if (selectedActivity != lead.activityState) {
+                    updates['activity_state'] = selectedActivity.name;
+                  }
+                  if (selectedPayment != lead.paymentStatus) {
+                    updates['payment_status'] = selectedPayment.name;
+                  }
+                  if (selectedDate != lead.nextFollowUpDate) {
+                    updates['next_follow_up_date'] = selectedDate;
+                  }
+                  final newTimeStr = selectedTime != null
+                      ? '${selectedTime!.hour.toString().padLeft(2, '0')}:${selectedTime!.minute.toString().padLeft(2, '0')}'
+                      : '';
+                  if (newTimeStr != lead.nextFollowUpTime) {
+                    updates['next_follow_up_time'] = newTimeStr;
+                  }
+                  // Save comment if provided
+                  final comment = commentController.text.trim();
+                  if (comment.isNotEmpty) {
+                    updates['comment'] = comment;
+                  }
+
+                  if (updates.isNotEmpty) {
+                    await _leadService.updateLead(
+                      lead.id,
+                      updates,
+                      updatedBy: widget.currentUser?.email ?? 'Unknown',
+                      comment: comment,
+                    );
+                    // Update local lead object so UI refreshes
+                    if (mounted) {
+                      setState(() {
+                        lead.rating = selectedRating;
+                        lead.health = selectedHealth;
+                        lead.stage = selectedStage;
+                        lead.activityState = selectedActivity;
+                        lead.paymentStatus = selectedPayment;
+                        lead.nextFollowUpDate = selectedDate;
+                        lead.nextFollowUpTime = selectedTime != null
+                            ? '${selectedTime!.hour.toString().padLeft(2, '0')}:${selectedTime!.minute.toString().padLeft(2, '0')}'
+                            : '';
+                        if (comment.isNotEmpty) lead.comment = comment;
+                      });
+                    }
+                    await _loadHistory();
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Lead updated successfully')),
+                      );
+                    }
+                  } else {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('No changes made')),
+                      );
+                    }
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Error: $e')),
+                    );
+                  }
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Look up user display name by email. Falls back to email prefix if not found.
+  String _getUserNameByEmail(String email) {
+    if (email.isEmpty) return '';
+    final user = _allUsers.where((u) => u.email == email).firstOrNull;
+    if (user != null && user.name.isNotEmpty) return user.name;
+    return email.split('@').first;
+  }
+
+  void _showAddCommentDialog(Lead lead) {
+    final commentCtrl = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Add Comment'),
+        content: SizedBox(
+          width: 400,
+          child: TextField(
+            controller: commentCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Comment',
+              hintText: 'Enter your comment or remark...',
+              border: OutlineInputBorder(),
+            ),
+            maxLines: 4,
+            autofocus: true,
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () async {
+              if (commentCtrl.text.trim().isEmpty) {
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  const SnackBar(content: Text('Please enter a comment')),
+                );
+                return;
+              }
+              Navigator.pop(ctx);
+              try {
+                await _leadService.addLeadHistory(
+                  lead.id,
+                  'Note',
+                  commentCtrl.text.trim(),
+                  widget.currentUser?.email ?? 'Unknown',
+                );
+                await _loadHistory();
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Comment added')),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Error: $e')),
+                  );
+                }
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildActivitySummaryCard(Lead lead, ColorScheme cs) {
     return Card(
       child: Container(
@@ -798,6 +1491,442 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
     );
   }
 
+  Widget _buildAssignmentCard(Lead lead, ColorScheme cs) {
+    return Card(
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Colors.deepPurple.withOpacity(0.1), Colors.white],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.deepPurple.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(Icons.people, color: Colors.deepPurple, size: 20),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text('Assignment & Tagging',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // Current Assignment Info
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.grey.shade200),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.person_pin, size: 16, color: Colors.deepPurple.shade700),
+                      const SizedBox(width: 8),
+                      const Text('Assigned To: ', style: TextStyle(fontWeight: FontWeight.w500)),
+                      Expanded(
+                        child: Text(
+                          lead.assignedTo.isNotEmpty ? _getUserNameByEmail(lead.assignedTo) : 'Not assigned',
+                          style: TextStyle(
+                            color: lead.assignedTo.isNotEmpty ? Colors.deepPurple.shade700 : Colors.grey,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.group, size: 16, color: Colors.blue.shade700),
+                      const SizedBox(width: 8),
+                      const Text('Followers: ', style: TextStyle(fontWeight: FontWeight.w500)),
+                      Expanded(
+                        child: lead.followers.isNotEmpty
+                            ? Wrap(
+                                spacing: 4,
+                                runSpacing: 4,
+                                children: lead.followers.map((f) => Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.blue.shade50,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: Colors.blue.shade200),
+                                  ),
+                                  child: Text(
+                                    _getUserNameByEmail(f),
+                                    style: TextStyle(fontSize: 11, color: Colors.blue.shade700),
+                                  ),
+                                )).toList(),
+                              )
+                            : Text(
+                                'None',
+                                style: TextStyle(color: Colors.grey, fontWeight: FontWeight.w600),
+                              ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Action Buttons
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => _showAssignLeadDialog(lead),
+                    icon: const Icon(Icons.person_add, size: 18),
+                    label: const Text('Assign'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.deepPurple,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => _showFollowersDialog(lead),
+                    icon: const Icon(Icons.group_add, size: 18),
+                    label: const Text('Followers'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.blue.shade700,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showAssignLeadDialog(Lead lead) {
+    AppUser? selectedEmployee;
+    String teamName = lead.groupName;
+    String groupName = lead.subGroup;
+
+    // Pre-select current values
+    if (lead.assignedTo.isNotEmpty) {
+      selectedEmployee = _allUsers.where((u) => u.email == lead.assignedTo).firstOrNull;
+    }
+
+    // All assignable users (not just members — any active user)
+    final assignableUsers = _allUsers.where((u) => u.isActive).toList();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx2, setDialogState) => AlertDialog(
+          title: const Text('Assign Lead'),
+          content: SizedBox(
+            width: 500,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Employee dropdown with search
+                  const Text('Assign to:', style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  Autocomplete<AppUser>(
+                    initialValue: TextEditingValue(text: selectedEmployee?.name ?? ''),
+                    optionsBuilder: (textEditingValue) {
+                      if (textEditingValue.text.isEmpty) {
+                        return assignableUsers;
+                      }
+                      final query = textEditingValue.text.toLowerCase();
+                      return assignableUsers.where((u) =>
+                        u.name.toLowerCase().contains(query) ||
+                        u.email.toLowerCase().contains(query)
+                      );
+                    },
+                    displayStringForOption: (user) => '${user.name} (${user.email})',
+                    fieldViewBuilder: (context, controller, focusNode, onSubmitted) {
+                      return TextField(
+                        controller: controller,
+                        focusNode: focusNode,
+                        decoration: InputDecoration(
+                          hintText: 'Search user by name or email...',
+                          border: const OutlineInputBorder(),
+                          prefixIcon: const Icon(Icons.person_search),
+                          suffixIcon: controller.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear),
+                                onPressed: () {
+                                  controller.clear();
+                                  setDialogState(() {
+                                    selectedEmployee = null;
+                                    teamName = '';
+                                    groupName = '';
+                                  });
+                                },
+                              )
+                            : null,
+                        ),
+                      );
+                    },
+                    onSelected: (user) {
+                      setDialogState(() {
+                        selectedEmployee = user;
+                        // Auto-populate team and group NAMES from user's profile IDs
+                        teamName = user.teamId != null && user.teamId!.isNotEmpty
+                            ? (_teamNames[user.teamId!] ?? user.teamId!)
+                            : '';
+                        groupName = user.groupId != null && user.groupId!.isNotEmpty
+                            ? (_groupNames[user.groupId!] ?? user.groupId!)
+                            : '';
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Auto-populated Team & Group (read-only)
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: TextEditingController(text: teamName),
+                          readOnly: true,
+                          decoration: InputDecoration(
+                            labelText: 'Team (Auto)',
+                            border: const OutlineInputBorder(),
+                            filled: true,
+                            fillColor: Colors.grey.shade100,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: TextEditingController(text: groupName),
+                          readOnly: true,
+                          decoration: InputDecoration(
+                            labelText: 'Group (Auto)',
+                            border: const OutlineInputBorder(),
+                            filled: true,
+                            fillColor: Colors.grey.shade100,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Team and Group are auto-filled from the assigned user\'s profile.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600, fontStyle: FontStyle.italic),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx2), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () async {
+                Navigator.pop(ctx2);
+                try {
+                  await _leadService.updateLead(
+                    lead.id,
+                    {
+                      'assigned_to': selectedEmployee?.email ?? '',
+                      'group_name': teamName,
+                      'sub_group': groupName,
+                      if (selectedEmployee != null) ...{
+                        'team_id': selectedEmployee!.teamId ?? '',
+                        'group_id': selectedEmployee!.groupId ?? '',
+                        'owner_uid': selectedEmployee!.uid,
+                      },
+                    },
+                    updatedBy: widget.currentUser?.email ?? 'Unknown',
+                  );
+
+                  // Update local state
+                  if (mounted) {
+                    setState(() {
+                      lead.assignedTo = selectedEmployee?.email ?? '';
+                      lead.groupName = teamName;
+                      lead.subGroup = groupName;
+                      if (selectedEmployee != null) {
+                        lead.teamId = selectedEmployee!.teamId ?? '';
+                        lead.groupId = selectedEmployee!.groupId ?? '';
+                        lead.ownerUid = selectedEmployee!.uid;
+                      }
+                    });
+                  }
+
+                  // Reload history to show the change
+                  await _loadHistory();
+
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Lead assignment updated')),
+                    );
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Error: $e')),
+                    );
+                  }
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showFollowersDialog(Lead lead) {
+    // Get team members that can be followers (TL, Manager, Coordinator, Member from same team)
+    final teamId = lead.teamId.isNotEmpty ? lead.teamId : (widget.currentUser?.teamId ?? '');
+    final teamUsers = _allUsers.where((u) =>
+      u.isActive &&
+      u.email != lead.assignedTo && // Don't show assigned user as follower option
+      (u.role == UserRole.teamLead ||
+       u.role == UserRole.manager ||
+       u.role == UserRole.coordinator ||
+       u.role == UserRole.member)
+    ).toList();
+
+    // Sort: same team first, then by name
+    teamUsers.sort((a, b) {
+      final aInTeam = a.teamId == teamId ? 0 : 1;
+      final bInTeam = b.teamId == teamId ? 0 : 1;
+      if (aInTeam != bInTeam) return aInTeam.compareTo(bInTeam);
+      return a.name.compareTo(b.name);
+    });
+
+    final selectedEmails = Set<String>.from(lead.followers);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx2, setDialogState) => AlertDialog(
+          title: const Text('Manage Followers'),
+          content: SizedBox(
+            width: 500,
+            height: 400,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Followers can view this lead. Select users to add as followers.',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600, fontStyle: FontStyle.italic),
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: teamUsers.length,
+                    itemBuilder: (context, index) {
+                      final user = teamUsers[index];
+                      final isSelected = selectedEmails.contains(user.email);
+                      final isSameTeam = user.teamId == teamId;
+                      return CheckboxListTile(
+                        value: isSelected,
+                        onChanged: (val) {
+                          setDialogState(() {
+                            if (val == true) {
+                              selectedEmails.add(user.email);
+                            } else {
+                              selectedEmails.remove(user.email);
+                            }
+                          });
+                        },
+                        title: Text(
+                          user.name.isNotEmpty ? user.name : user.email,
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                        subtitle: Text(
+                          '${user.email} - ${user.role.label}${isSameTeam ? ' (Same Team)' : ''}',
+                          style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                        ),
+                        dense: true,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        secondary: Icon(
+                          isSameTeam ? Icons.group : Icons.person_outline,
+                          size: 18,
+                          color: isSameTeam ? Colors.blue : Colors.grey,
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx2), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () async {
+                Navigator.pop(ctx2);
+                try {
+                  final followers = selectedEmails.toList();
+
+                  await _leadService.updateLead(
+                    lead.id,
+                    {
+                      'followers': followers,
+                    },
+                    updatedBy: widget.currentUser?.email ?? 'Unknown',
+                  );
+
+                  // Update local state
+                  if (mounted) {
+                    setState(() {
+                      lead.followers = followers;
+                    });
+                  }
+
+                  // Reload history to show the change
+                  await _loadHistory();
+
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Followers updated successfully')),
+                    );
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Error: $e')),
+                    );
+                  }
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _iconInfoRow(IconData icon, String label, String value) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -857,6 +1986,24 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
         ),
       ),
     );
+  }
+
+  /// Resolve team name: use stored name, fall back to lookup by team_id
+  String _resolveTeamName(Lead lead) {
+    if (lead.groupName.isNotEmpty) return lead.groupName;
+    if (lead.teamId.isNotEmpty && _teamNames.containsKey(lead.teamId)) {
+      return _teamNames[lead.teamId]!;
+    }
+    return '-';
+  }
+
+  /// Resolve group name: use stored name, fall back to lookup by group_id
+  String _resolveGroupName(Lead lead) {
+    if (lead.subGroup.isNotEmpty) return lead.subGroup;
+    if (lead.groupId.isNotEmpty && _groupNames.containsKey(lead.groupId)) {
+      return _groupNames[lead.groupId]!;
+    }
+    return '-';
   }
 
   Widget _infoRow(String label, String value) {
@@ -1579,15 +2726,56 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
                         ),
                       ),
                     ],
-                    // Changed fields
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        children: entry.changedFields.entries.map((e) {
-                          return _buildChangeItem(e.key, e.value as Map<String, dynamic>);
-                        }).toList(),
+                    // Activity log description (for Quick Follow-up entries)
+                    if (entry.isActivityLog && entry.description != null && entry.description!.isNotEmpty) ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: actionType.color.withOpacity(0.05),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: actionType.color.withOpacity(0.2)),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(Icons.description, size: 14, color: actionType.color),
+                                  const SizedBox(width: 6),
+                                  Text('Activity Details',
+                                      style: TextStyle(
+                                        color: actionType.color,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                      )),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                entry.description!,
+                                style: TextStyle(
+                                  color: Colors.grey.shade800,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
-                    ),
+                    ],
+                    // Changed fields (for regular update entries)
+                    if (!entry.isActivityLog && entry.changedFields.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          children: entry.changedFields.entries.map((e) {
+                            return _buildChangeItem(e.key, e.value as Map<String, dynamic>);
+                          }).toList(),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -1698,6 +2886,22 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
   }
 
   _ActionType _getActionType(LeadHistory entry) {
+    // Handle activity log entries (from Quick Follow-up)
+    if (entry.isActivityLog) {
+      switch (entry.action?.toLowerCase()) {
+        case 'call':
+          return _ActionType('Phone Call', Icons.phone, Colors.teal);
+        case 'email':
+          return _ActionType('Email', Icons.email, Colors.blue);
+        case 'meeting':
+          return _ActionType('Meeting', Icons.videocam, Colors.purple);
+        case 'note':
+          return _ActionType('Note Added', Icons.note_add, Colors.amber.shade700);
+        default:
+          return _ActionType('Activity', Icons.history, Colors.indigo);
+      }
+    }
+
     final comment = entry.comment.toLowerCase();
     final fields = entry.changedFields.keys.toList();
 

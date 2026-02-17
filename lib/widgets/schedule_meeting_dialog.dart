@@ -186,13 +186,18 @@ class _ScheduleMeetingDialogState extends State<ScheduleMeetingDialog> {
         createdAt: DateTime.now(),
         organizerUid: widget.currentUser.uid,
         assignedTo: widget.currentUser.uid,
+        teamId: widget.currentUser.teamId,
+        groupId: widget.currentUser.groupId,
       );
 
       await _calendarService.createMeeting(meeting);
 
       // Add history entry for the lead if a lead is associated
+      // AND update the lead's meeting fields for dashboard sync
       if (leadToUse != null && leadToUse.id.isNotEmpty) {
         await _addMeetingHistoryToLead(leadToUse.id, meeting);
+        // Sync meeting date/time to lead for dashboard activity tracking
+        await _updateLeadMeetingInfo(leadToUse.id, meeting);
       }
 
       if (mounted) {
@@ -242,6 +247,28 @@ class _ScheduleMeetingDialogState extends State<ScheduleMeetingDialog> {
       });
     } catch (e) {
       debugPrint('Error adding meeting history: $e');
+    }
+  }
+
+  /// Update lead's meeting date/time for dashboard activity sync
+  Future<void> _updateLeadMeetingInfo(String leadId, Meeting meeting) async {
+    try {
+      final timeStr = '${meeting.startTime.hour.toString().padLeft(2, '0')}:${meeting.startTime.minute.toString().padLeft(2, '0')}';
+
+      await FirebaseFirestore.instance
+          .collection('leads')
+          .doc(leadId)
+          .update({
+        'meeting_date': Timestamp.fromDate(meeting.startTime),
+        'meeting_time': timeStr,
+        'meeting_link': meeting.meetLink ?? '',
+        'meeting_agenda': meeting.description ?? '',
+        'updated_at': FieldValue.serverTimestamp(),
+        'last_updated_by': widget.currentUser.email,
+      });
+      debugPrint('Updated lead $leadId with meeting info');
+    } catch (e) {
+      debugPrint('Error updating lead meeting info: $e');
     }
   }
 

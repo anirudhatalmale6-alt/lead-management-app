@@ -2,8 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/meeting.dart';
 import '../models/user.dart';
+import '../models/lead.dart';
 import '../services/calendar_service.dart';
+import '../services/lead_service.dart';
+import '../services/user_service.dart';
 import '../widgets/schedule_meeting_dialog.dart';
+import 'lead_detail_screen.dart';
 
 class CalendarScreen extends StatefulWidget {
   final AppUser currentUser;
@@ -32,34 +36,139 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   // Team filter state
   String _calendarScope = 'my'; // 'my', 'team', 'all'
-  List<Map<String, dynamic>> _teamMembers = [];
+  List<AppUser> _visibleUsers = []; // Users visible based on role hierarchy
+  String? _selectedMemberUid; // Selected team member UID for filtering (null = all)
+  final UserService _userService = UserService();
 
   @override
   void initState() {
     super.initState();
     _selectedDate = DateTime.now();
     _loadMeetings();
-    _loadTeamMembers();
+    _loadVisibleUsers();
   }
 
-  Future<void> _loadTeamMembers() async {
-    // Load team members for the current user's team
-    // For now, use mock data - in production, fetch from Firestore
-    setState(() {
-      _teamMembers = [
-        {'uid': 'u1', 'name': 'Alice Johnson', 'role': 'Manager'},
-        {'uid': 'u2', 'name': 'Bob Smith', 'role': 'TL'},
-        {'uid': 'u3', 'name': 'Carol Davis', 'role': 'Coordinator'},
-        {'uid': 'u4', 'name': 'Dan Wilson', 'role': 'Emp'},
-        {'uid': 'u5', 'name': 'Eve Martinez', 'role': 'Emp'},
-      ];
-    });
+  Future<void> _loadVisibleUsers() async {
+    // Load users visible to current user based on role hierarchy:
+    // Super Admin → can see everyone
+    // Admin → own + their manager + manager's team
+    // Manager/TL → own + their team members
+    // Coordinator → own + their group members
+    // Employee → only self (no dropdown needed)
+    try {
+      final currentUser = widget.currentUser;
+      final role = currentUser.role;
+      List<AppUser> users = [];
+
+      switch (role) {
+        case UserRole.superAdmin:
+          // Can see all users
+          users = await _userService.getAllUsers();
+          break;
+        case UserRole.admin:
+          // Can see own team members only
+          if (currentUser.teamId != null && currentUser.teamId!.isNotEmpty) {
+            users = await _userService.getUsersByTeam(currentUser.teamId!);
+          }
+          // Always include self
+          if (!users.any((u) => u.uid == currentUser.uid)) {
+            users.insert(0, currentUser);
+          }
+          break;
+        case UserRole.manager:
+        case UserRole.teamLead:
+          // Can see own + team members
+          if (currentUser.teamId != null && currentUser.teamId!.isNotEmpty) {
+            users = await _userService.getUsersByTeam(currentUser.teamId!);
+          }
+          // Always include self
+          if (!users.any((u) => u.uid == currentUser.uid)) {
+            users.insert(0, currentUser);
+          }
+          break;
+        case UserRole.coordinator:
+          // Can see own + group members
+          if (currentUser.groupId != null && currentUser.groupId!.isNotEmpty) {
+            users = await _userService.getUsersByGroup(currentUser.groupId!);
+          } else if (currentUser.teamId != null && currentUser.teamId!.isNotEmpty) {
+            users = await _userService.getUsersByTeam(currentUser.teamId!);
+          }
+          // Always include self
+          if (!users.any((u) => u.uid == currentUser.uid)) {
+            users.insert(0, currentUser);
+          }
+          break;
+        case UserRole.member:
+          // Can see only self — no dropdown needed
+          users = [currentUser];
+          break;
+      }
+
+      // Sort: current user first, then by role hierarchy, then alphabetically
+      users.sort((a, b) {
+        if (a.uid == currentUser.uid) return -1;
+        if (b.uid == currentUser.uid) return 1;
+        final roleOrder = {
+          UserRole.superAdmin: 0, UserRole.admin: 1, UserRole.manager: 2,
+          UserRole.teamLead: 3, UserRole.coordinator: 4, UserRole.member: 5,
+        };
+        final roleCompare = (roleOrder[a.role] ?? 5).compareTo(roleOrder[b.role] ?? 5);
+        if (roleCompare != 0) return roleCompare;
+        return a.name.compareTo(b.name);
+      });
+
+      if (mounted) {
+        setState(() => _visibleUsers = users);
+      }
+    } catch (e) {
+      debugPrint('Error loading visible users: $e');
+      // Fallback: at minimum show current user
+      if (mounted) {
+        setState(() => _visibleUsers = [widget.currentUser]);
+      }
+    }
   }
 
   Future<void> _loadMeetings() async {
     setState(() => _isLoading = true);
     try {
-      final meetings = await _calendarService.getAllMeetings();
+      List<Meeting> meetings;
+      final user = widget.currentUser;
+      final role = user.role;
+
+      // Role-based meeting loading (same logic as leads)
+      switch (role) {
+        case UserRole.superAdmin:
+          // Super Admin has global view
+          meetings = await _calendarService.getAllMeetings();
+          break;
+        case UserRole.admin:
+        case UserRole.manager:
+        case UserRole.teamLead:
+          // Admin, Manager, TL see only their team's meetings
+          if (user.teamId != null && user.teamId!.isNotEmpty) {
+            meetings = await _calendarService.getMeetingsByTeam(user.teamId!);
+          } else {
+            // No team assigned — fall back to own meetings
+            meetings = await _calendarService.getMeetingsByUser(user.uid, user.email);
+          }
+          break;
+        case UserRole.coordinator:
+          // Coordinator sees only their group's meetings
+          if (user.groupId != null && user.groupId!.isNotEmpty) {
+            meetings = await _calendarService.getMeetingsByGroup(user.groupId!);
+          } else if (user.teamId != null && user.teamId!.isNotEmpty) {
+            meetings = await _calendarService.getMeetingsByTeam(user.teamId!);
+          } else {
+            meetings = await _calendarService.getMeetingsByUser(user.uid, user.email);
+          }
+          break;
+        case UserRole.member:
+          // Own meetings only
+          meetings = await _calendarService.getMeetingsByUser(user.uid, user.email);
+          break;
+      }
+
       if (mounted) {
         setState(() {
           _meetings = meetings;
@@ -76,34 +185,28 @@ class _CalendarScreenState extends State<CalendarScreen> {
   List<Meeting> get _filteredMeetings {
     var results = _meetings;
 
-    // CALENDAR PERMISSION: Members/Emp only see their own meetings
-    // Managers, TL, Admin, Super Admin can see all based on scope setting
-    final userRole = widget.currentUser.role;
-    final isRestrictedUser = userRole == UserRole.member || userRole == UserRole.coordinator;
-
-    if (isRestrictedUser) {
-      // Members and Coordinators only see their own meetings
+    // Additional client-side filter for "my" scope
+    // The _loadMeetings already filters by role (team/group/user)
+    // This additional filter further restricts to user's own meetings if scope is 'my'
+    if (_calendarScope == 'my') {
       results = results.where((m) {
-        // Check if user created the meeting or is a guest
         final isOrganizer = m.organizerUid == widget.currentUser.uid;
         final isGuest = m.guests.any((g) => g.email == widget.currentUser.email);
         final isAssigned = m.assignedTo == widget.currentUser.uid;
         return isOrganizer || isGuest || isAssigned;
       }).toList();
-    } else {
-      // For managers and above, filter based on scope setting
-      if (_calendarScope == 'my') {
+    }
+    // For 'team' scope with a specific member selected, filter to that member's meetings
+    if (_calendarScope == 'team' && _selectedMemberUid != null) {
+      final selectedUser = _visibleUsers.where((u) => u.uid == _selectedMemberUid).firstOrNull;
+      if (selectedUser != null) {
         results = results.where((m) {
-          final isOrganizer = m.organizerUid == widget.currentUser.uid;
-          final isGuest = m.guests.any((g) => g.email == widget.currentUser.email);
-          final isAssigned = m.assignedTo == widget.currentUser.uid;
+          final isOrganizer = m.organizerUid == selectedUser.uid;
+          final isGuest = m.guests.any((g) => g.email == selectedUser.email);
+          final isAssigned = m.assignedTo == selectedUser.uid;
           return isOrganizer || isGuest || isAssigned;
         }).toList();
-      } else if (_calendarScope == 'team') {
-        // Show team members' meetings (would need team data)
-        // For now show all - in production filter by team
       }
-      // 'all' scope shows everything
     }
 
     if (_filterPartyName != null && _filterPartyName!.isNotEmpty) {
@@ -287,72 +390,204 @@ class _CalendarScreenState extends State<CalendarScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Team Calendar Filter Row - responsive
-            if (isNarrow) ...[
-              const Text('Calendar View:', style: TextStyle(fontWeight: FontWeight.w500)),
-              const SizedBox(height: 8),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: SegmentedButton<String>(
-                  segments: const [
-                    ButtonSegment(value: 'my', label: Text('My'), icon: Icon(Icons.person, size: 14)),
-                    ButtonSegment(value: 'team', label: Text('Team'), icon: Icon(Icons.groups, size: 14)),
-                    ButtonSegment(value: 'all', label: Text('All'), icon: Icon(Icons.calendar_month, size: 14)),
-                  ],
-                  selected: {_calendarScope},
-                  onSelectionChanged: (selection) {
-                    setState(() => _calendarScope = selection.first);
-                  },
-                  style: const ButtonStyle(visualDensity: VisualDensity.compact),
-                ),
-              ),
-            ] else ...[
-              Row(
-                children: [
-                  const Text('Calendar View: ', style: TextStyle(fontWeight: FontWeight.w500)),
-                  const SizedBox(width: 8),
-                  SegmentedButton<String>(
-                    segments: const [
-                      ButtonSegment(value: 'my', label: Text('My Calendar'), icon: Icon(Icons.person, size: 16)),
-                      ButtonSegment(value: 'team', label: Text('Team Calendar'), icon: Icon(Icons.groups, size: 16)),
-                      ButtonSegment(value: 'all', label: Text('All'), icon: Icon(Icons.calendar_month, size: 16)),
+            // Only show toggle for roles that have team/group visibility
+            if (widget.currentUser.role != UserRole.member) ...[
+              if (isNarrow) ...[
+                const Text('Calendar View:', style: TextStyle(fontWeight: FontWeight.w500)),
+                const SizedBox(height: 8),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: SegmentedButton<String>(
+                    segments: [
+                      const ButtonSegment(value: 'my', label: Text('My'), icon: Icon(Icons.person, size: 14)),
+                      ButtonSegment(
+                        value: 'team',
+                        label: Text(widget.currentUser.role == UserRole.coordinator ? 'Group' : 'Team'),
+                        icon: const Icon(Icons.groups, size: 14),
+                      ),
                     ],
                     selected: {_calendarScope},
                     onSelectionChanged: (selection) {
-                      setState(() => _calendarScope = selection.first);
+                      setState(() {
+                        _calendarScope = selection.first;
+                        if (_calendarScope == 'my') _selectedMemberUid = null;
+                      });
                     },
                     style: const ButtonStyle(visualDensity: VisualDensity.compact),
                   ),
-                ],
-              ),
-            ],
-            // Team members chips (when team view is selected)
-            if (_calendarScope == 'team' && _teamMembers.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
+                ),
+              ] else ...[
+                Row(
                   children: [
-                    const Text('Team: ', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                    ..._teamMembers.map((m) => Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: Chip(
-                        avatar: CircleAvatar(
-                          radius: 10,
-                          backgroundColor: cs.primaryContainer,
-                          child: Text(
-                            (m['name'] as String)[0],
-                            style: TextStyle(fontSize: 8, color: cs.onPrimaryContainer),
-                          ),
+                    const Text('Calendar View: ', style: TextStyle(fontWeight: FontWeight.w500)),
+                    const SizedBox(width: 8),
+                    SegmentedButton<String>(
+                      segments: [
+                        const ButtonSegment(value: 'my', label: Text('My Calendar'), icon: Icon(Icons.person, size: 16)),
+                        ButtonSegment(
+                          value: 'team',
+                          label: Text(widget.currentUser.role == UserRole.coordinator ? 'Group Calendar' : 'Team Calendar'),
+                          icon: const Icon(Icons.groups, size: 16),
                         ),
-                        label: Text(m['name'] as String, style: const TextStyle(fontSize: 10)),
-                        padding: EdgeInsets.zero,
-                        visualDensity: VisualDensity.compact,
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ],
+                      selected: {_calendarScope},
+                      onSelectionChanged: (selection) {
+                        setState(() => _calendarScope = selection.first);
+                      },
+                      style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+            // Team member dropdown (when team view is selected)
+            if (_calendarScope == 'team' && _visibleUsers.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              if (isNarrow) ...[
+                DropdownButtonFormField<String?>(
+                  value: _selectedMemberUid,
+                  decoration: InputDecoration(
+                    labelText: 'Team Member',
+                    prefixIcon: const Icon(Icons.person_search, size: 20),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  ),
+                  items: [
+                    const DropdownMenuItem(
+                      value: null,
+                      child: Text('All Members'),
+                    ),
+                    ..._visibleUsers.map((u) => DropdownMenuItem(
+                      value: u.uid,
+                      child: Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 12,
+                            backgroundColor: _getRoleColor(u.role).withOpacity(0.15),
+                            child: Text(
+                              u.name.isNotEmpty ? u.name[0].toUpperCase() : '?',
+                              style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: _getRoleColor(u.role)),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  u.uid == widget.currentUser.uid ? '${u.name} (You)' : u.name,
+                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                Text(
+                                  u.role.label,
+                                  style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     )),
                   ],
+                  onChanged: (value) {
+                    setState(() => _selectedMemberUid = value);
+                  },
+                  selectedItemBuilder: (context) {
+                    return [
+                      const Text('All Members'),
+                      ..._visibleUsers.map((u) => Text(
+                        u.uid == widget.currentUser.uid ? '${u.name} (You)' : u.name,
+                        overflow: TextOverflow.ellipsis,
+                      )),
+                    ];
+                  },
                 ),
-              ),
+              ] else ...[
+                Row(
+                  children: [
+                    const Text('View Calendar Of: ', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 280,
+                      child: DropdownButtonFormField<String?>(
+                        value: _selectedMemberUid,
+                        decoration: InputDecoration(
+                          prefixIcon: const Icon(Icons.person_search, size: 20),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        ),
+                        items: [
+                          const DropdownMenuItem(
+                            value: null,
+                            child: Text('All Members'),
+                          ),
+                          ..._visibleUsers.map((u) => DropdownMenuItem(
+                            value: u.uid,
+                            child: Row(
+                              children: [
+                                CircleAvatar(
+                                  radius: 12,
+                                  backgroundColor: _getRoleColor(u.role).withOpacity(0.15),
+                                  child: Text(
+                                    u.name.isNotEmpty ? u.name[0].toUpperCase() : '?',
+                                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: _getRoleColor(u.role)),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        u.uid == widget.currentUser.uid ? '${u.name} (You)' : u.name,
+                                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      Text(
+                                        u.role.label,
+                                        style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )),
+                        ],
+                        onChanged: (value) {
+                          setState(() => _selectedMemberUid = value);
+                        },
+                        selectedItemBuilder: (context) {
+                          return [
+                            const Text('All Members'),
+                            ..._visibleUsers.map((u) => Text(
+                              u.uid == widget.currentUser.uid ? '${u.name} (You)' : u.name,
+                              overflow: TextOverflow.ellipsis,
+                            )),
+                          ];
+                        },
+                      ),
+                    ),
+                    if (_selectedMemberUid != null) ...[
+                      const SizedBox(width: 8),
+                      TextButton.icon(
+                        onPressed: () => setState(() => _selectedMemberUid = null),
+                        icon: const Icon(Icons.clear, size: 16),
+                        label: const Text('Show All', style: TextStyle(fontSize: 12)),
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.orange.shade700,
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
             ],
             const SizedBox(height: 12),
             // Existing filters - responsive layout
@@ -655,87 +890,122 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 4,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: statusColor,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        meeting.title,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
-                      Text(
-                        meeting.leadName ?? '',
-                        style: TextStyle(
-                          color: Colors.grey.shade600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: statusColor.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    meeting.status.label,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
+      child: InkWell(
+        onTap: meeting.leadId != null ? () => _navigateToLeadDetail(meeting.leadId!) : null,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 4,
+                    height: 40,
+                    decoration: BoxDecoration(
                       color: statusColor,
+                      borderRadius: BorderRadius.circular(2),
                     ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Icon(Icons.access_time, size: 16, color: Colors.grey.shade600),
-                const SizedBox(width: 4),
-                Text(
-                  '${DateFormat('MMM d').format(meeting.startTime)} - ${DateFormat('h:mm a').format(meeting.startTime)}',
-                  style: TextStyle(color: Colors.grey.shade600),
-                ),
-                const SizedBox(width: 16),
-                if (meeting.location?.isNotEmpty == true) ...[
-                  Icon(Icons.location_on, size: 16, color: Colors.grey.shade600),
-                  const SizedBox(width: 4),
+                  const SizedBox(width: 12),
                   Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          meeting.title,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                        Row(
+                          children: [
+                            Text(
+                              meeting.leadName ?? '',
+                              style: TextStyle(
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                            if (meeting.leadId != null) ...[
+                              const SizedBox(width: 4),
+                              Icon(Icons.open_in_new, size: 14, color: cs.primary),
+                            ],
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: statusColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                     child: Text(
-                      meeting.location ?? '',
-                      style: TextStyle(color: Colors.grey.shade600),
-                      overflow: TextOverflow.ellipsis,
+                      meeting.status.label,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: statusColor,
+                      ),
                     ),
                   ),
                 ],
-              ],
-            ),
-          ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Icon(Icons.access_time, size: 16, color: Colors.grey.shade600),
+                  const SizedBox(width: 4),
+                  Text(
+                    '${DateFormat('MMM d').format(meeting.startTime)} - ${DateFormat('h:mm a').format(meeting.startTime)}',
+                    style: TextStyle(color: Colors.grey.shade600),
+                  ),
+                  const SizedBox(width: 16),
+                  if (meeting.location?.isNotEmpty == true) ...[
+                    Icon(Icons.location_on, size: 16, color: Colors.grey.shade600),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        meeting.location ?? '',
+                        style: TextStyle(color: Colors.grey.shade600),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
+  }
+
+  Future<void> _navigateToLeadDetail(String leadId) async {
+    try {
+      final leadService = LeadService();
+      final lead = await leadService.getLeadById(leadId);
+      if (lead != null && mounted) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => LeadDetailScreen(
+              lead: lead,
+              currentUser: widget.currentUser,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load lead details: $e')),
+        );
+      }
+    }
   }
 
   Widget _buildMonthHeader(ColorScheme cs) {
@@ -1008,6 +1278,17 @@ class _CalendarScreenState extends State<CalendarScreen> {
     );
   }
 
+  Color _getRoleColor(UserRole role) {
+    switch (role) {
+      case UserRole.superAdmin: return Colors.red;
+      case UserRole.admin: return Colors.deepPurple;
+      case UserRole.manager: return Colors.blue;
+      case UserRole.teamLead: return Colors.teal;
+      case UserRole.coordinator: return Colors.orange;
+      case UserRole.member: return Colors.grey;
+    }
+  }
+
   Widget _buildMeetingChip(Meeting meeting) {
     final statusColor = _getStatusColor(meeting.status);
     final timeStr = DateFormat('HH:mm').format(meeting.startTime);
@@ -1127,6 +1408,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
                             meeting.id, status);
                         _loadMeetings();
                       },
+                      onViewLead: meeting.leadId != null
+                          ? () => _navigateToLeadDetail(meeting.leadId!)
+                          : null,
                     );
                   },
                 ),
@@ -1158,10 +1442,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
 class _MeetingDetailCard extends StatelessWidget {
   final Meeting meeting;
   final Function(MeetingStatus) onStatusChange;
+  final VoidCallback? onViewLead;
 
   const _MeetingDetailCard({
     required this.meeting,
     required this.onStatusChange,
+    this.onViewLead,
   });
 
   Color _getStatusColor(MeetingStatus status) {
@@ -1266,15 +1552,114 @@ class _MeetingDetailCard extends StatelessWidget {
             ),
             if (meeting.leadName != null) ...[
               const SizedBox(height: 8),
+              InkWell(
+                onTap: onViewLead,
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.shade100),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.person_outline, size: 14, color: Colors.blue.shade600),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          meeting.leadName!,
+                          style: TextStyle(
+                            color: Colors.blue.shade700,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      if (onViewLead != null) ...[
+                        const SizedBox(width: 4),
+                        Icon(Icons.open_in_new, size: 12, color: Colors.blue.shade600),
+                        const SizedBox(width: 4),
+                        Text(
+                          'View Lead',
+                          style: TextStyle(
+                            color: Colors.blue.shade600,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            // Show meeting description/agenda if available
+            if (meeting.description != null && meeting.description!.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.subject, size: 14, color: Colors.grey.shade600),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        meeting.description!,
+                        style: TextStyle(
+                          color: Colors.grey.shade700,
+                          fontSize: 12,
+                        ),
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            // Show guests if available
+            if (meeting.guests.isNotEmpty) ...[
+              const SizedBox(height: 8),
               Row(
                 children: [
-                  Icon(Icons.person_outline, size: 14, color: Colors.grey.shade600),
-                  const SizedBox(width: 4),
-                  Text(
-                    meeting.leadName!,
-                    style: TextStyle(
-                      color: Colors.grey.shade600,
-                      fontSize: 12,
+                  Icon(Icons.people_outline, size: 14, color: Colors.grey.shade600),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Guests: ${meeting.guests.map((g) => g.name ?? g.email).join(", ")}',
+                      style: TextStyle(
+                        color: Colors.grey.shade600,
+                        fontSize: 11,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            // Show location if available
+            if (meeting.location != null && meeting.location!.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Icon(Icons.location_on_outlined, size: 14, color: Colors.grey.shade600),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      meeting.location!,
+                      style: TextStyle(
+                        color: Colors.grey.shade600,
+                        fontSize: 11,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ],

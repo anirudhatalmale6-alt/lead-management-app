@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import '../models/lead.dart';
 import '../models/user.dart';
 import '../data/location_data.dart';
+import '../services/firestore_service.dart';
 
 class LeadFormScreen extends StatefulWidget {
   final Lead? existingLead;
@@ -66,7 +67,7 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
   // Section 5: Notes
   late final TextEditingController _notesController;
 
-  // Section 6: Submitter Info
+  // Section 6: Creator Info
   late final TextEditingController _submitterNameController;
   late final TextEditingController _submitterEmailController;
   late final TextEditingController _submitterMobileController;
@@ -174,7 +175,7 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
     // Section 5: Notes
     _notesController = TextEditingController(text: lead?.notes ?? '');
 
-    // Section 6: Submitter Info — auto-fill from logged-in user on new leads
+    // Section 6: Creator Info — auto-fill from logged-in user on new leads
     final user = widget.currentUser;
     _submitterNameController = TextEditingController(
         text: lead?.submitterName ?? user?.name ?? '');
@@ -183,9 +184,55 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
     _submitterMobileController = TextEditingController(
         text: lead?.submitterMobile ?? user?.phone ?? '');
     _groupNameController = TextEditingController(
-        text: lead?.groupName ?? user?.groupId ?? '');
+        text: lead?.groupName ?? '');
     _subGroupController =
         TextEditingController(text: lead?.subGroup ?? '');
+
+    // For new leads, look up team/group names from user's IDs
+    if (lead == null && user != null) {
+      _loadTeamGroupNames(user);
+    }
+  }
+
+  /// Load team and group names from Firestore based on user's IDs
+  Future<void> _loadTeamGroupNames(AppUser user) async {
+    final firestoreService = FirestoreService();
+
+    // Load team name
+    if (user.teamId != null && user.teamId!.isNotEmpty) {
+      try {
+        final teams = await firestoreService.getTeams();
+        final team = teams.firstWhere(
+          (t) => t['id'] == user.teamId,
+          orElse: () => <String, dynamic>{},
+        );
+        if (team.isNotEmpty && mounted) {
+          setState(() {
+            _groupNameController.text = team['name'] ?? user.teamId!;
+          });
+        }
+      } catch (e) {
+        debugPrint('Error loading team name: $e');
+      }
+    }
+
+    // Load group name
+    if (user.groupId != null && user.groupId!.isNotEmpty) {
+      try {
+        final groups = await firestoreService.getGroups();
+        final group = groups.firstWhere(
+          (g) => g['id'] == user.groupId,
+          orElse: () => <String, dynamic>{},
+        );
+        if (group.isNotEmpty && mounted) {
+          setState(() {
+            _subGroupController.text = group['name'] ?? user.groupId!;
+          });
+        }
+      } catch (e) {
+        debugPrint('Error loading group name: $e');
+      }
+    }
   }
 
   @override
@@ -303,6 +350,9 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
       lead.submitterMobile = _submitterMobileController.text.trim();
       lead.groupName = _groupNameController.text.trim();
       lead.subGroup = _subGroupController.text.trim();
+      if (lead.submitterRole.isEmpty && widget.currentUser != null) {
+        lead.submitterRole = widget.currentUser!.role.label;
+      }
       lead.updatedAt = DateTime.now();
       widget.onSave(lead);
     } else {
@@ -336,6 +386,7 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
         submitterMobile: _submitterMobileController.text.trim(),
         groupName: _groupNameController.text.trim(),
         subGroup: _subGroupController.text.trim(),
+        submitterRole: widget.currentUser?.role.label ?? '',
       );
       widget.onSave(lead);
     }
@@ -703,36 +754,38 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // Section 6: Submitter Info
+  // Section 6: Creator Info
   // ---------------------------------------------------------------------------
   Widget _buildSubmitterInfoSection(bool isWide) {
-    // Auto-filled from user account for new leads
-    final bool autoFilled = !_isEditing && widget.currentUser != null;
+    // Creator info is always auto-filled and read-only
+    final bool autoFilled = widget.currentUser != null;
     final fields = <Widget>[
       _buildTextField(
         controller: _submitterNameController,
-        label: 'Submitter Name',
-        readOnly: autoFilled,
+        label: 'Creator Name',
+        readOnly: true,
       ),
       _buildTextField(
         controller: _submitterEmailController,
-        label: 'Submitter Email',
+        label: 'Creator Email',
         keyboardType: TextInputType.emailAddress,
-        readOnly: autoFilled,
+        readOnly: true,
       ),
       _buildTextField(
         controller: _submitterMobileController,
-        label: 'Submitter Mobile',
+        label: 'Creator Mobile',
         keyboardType: TextInputType.phone,
-        readOnly: autoFilled,
+        readOnly: true,
       ),
       _buildTextField(
         controller: _groupNameController,
-        label: 'Group Name',
+        label: 'Team',
+        readOnly: true,
       ),
       _buildTextField(
         controller: _subGroupController,
-        label: 'Sub Group',
+        label: 'Group',
+        readOnly: true,
       ),
     ];
 
@@ -748,7 +801,7 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
                     size: 20, color: Theme.of(context).colorScheme.primary),
                 const SizedBox(width: 8),
                 Text(
-                  'Submitter Info',
+                  'Creator Info',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w600,
                       ),

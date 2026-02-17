@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'models/lead.dart';
 import 'models/user.dart';
 import 'theme/app_theme.dart';
@@ -18,6 +19,8 @@ import 'widgets/app_shell.dart';
 import 'services/firebase_options.dart';
 import 'services/auth_service.dart';
 import 'services/lead_service.dart';
+import 'services/user_service.dart';
+import 'services/firestore_service.dart';
 import 'data/mock_data.dart';
 
 void main() async {
@@ -97,7 +100,14 @@ class _AppRootState extends State<AppRoot> {
     }
   }
 
-  void _login(AppUser user) {
+  void _login(AppUser user) async {
+    // Reset navigation to Dashboard on login
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt('selectedNavIndex', 0);
+    } catch (e) {
+      debugPrint('Error resetting nav index: $e');
+    }
     setState(() => _currentUser = user);
     _loadLeads();
   }
@@ -118,23 +128,44 @@ class _AppRootState extends State<AppRoot> {
       switch (user.role) {
         case UserRole.superAdmin:
         case UserRole.admin:
-        case UserRole.manager:
-          // Full access — see all leads
+          // Super Admin and Admin have global view — see all leads
           leads = await _leadService.getAllLeads();
           break;
+        case UserRole.manager:
         case UserRole.teamLead:
-        case UserRole.coordinator:
-          // Team-scoped — see leads belonging to their team
+          // Manager, TL see their team's leads + leads where they're follower/assigned
           if (user.teamId != null && user.teamId!.isNotEmpty) {
-            leads = await _leadService.getLeadsByTeam(user.teamId!);
+            final teamLeads = await _leadService.getLeadsByTeam(user.teamId!);
+            final userLeads = await _leadService.getLeadsForUser(user.email, ownerUid: user.uid);
+            // Merge without duplicates
+            final seen = <String>{};
+            leads = [];
+            for (final l in [...teamLeads, ...userLeads]) {
+              if (seen.add(l.id)) leads.add(l);
+            }
           } else {
             // No team assigned — fall back to own leads
-            leads = await _leadService.getLeadsByOwner(user.uid);
+            leads = await _leadService.getLeadsForUser(user.email, ownerUid: user.uid);
+          }
+          break;
+        case UserRole.coordinator:
+          // Coordinator sees own leads + leads from members in their group
+          if (user.groupId != null && user.groupId!.isNotEmpty) {
+            final groupLeads = await _leadService.getLeadsByGroup(user.groupId!);
+            final userLeads = await _leadService.getLeadsForUser(user.email, ownerUid: user.uid);
+            // Merge without duplicates
+            final seen = <String>{};
+            leads = [];
+            for (final l in [...groupLeads, ...userLeads]) {
+              if (seen.add(l.id)) leads.add(l);
+            }
+          } else {
+            leads = await _leadService.getLeadsForUser(user.email, ownerUid: user.uid);
           }
           break;
         case UserRole.member:
-          // Own leads only
-          leads = await _leadService.getLeadsByOwner(user.uid);
+          // Member sees only their own leads (created by, assigned to, or follower)
+          leads = await _leadService.getLeadsForUser(user.email, ownerUid: user.uid);
           break;
       }
       if (mounted) {
@@ -220,6 +251,43 @@ class _AppRootState extends State<AppRoot> {
                 savedLead.teamId = _currentUser?.teamId ?? '';
                 savedLead.groupId = _currentUser?.groupId ?? '';
                 savedLead.createdBy = _currentUserIdentifier;
+                savedLead.submitterRole = _currentUser?.role.label ?? '';
+                // Auto-assign to self
+                savedLead.assignedTo = _currentUser!.email;
+                // Auto-populate team/group names if form didn't fill them
+                try {
+                  final allUsers = await UserService().getAllUsers();
+                  final firestoreService = FirestoreService();
+                  final creatorTeamId = _currentUser?.teamId ?? '';
+                  final creatorGroupId = _currentUser?.groupId ?? '';
+                  // Fill team/group names from Firestore if still empty
+                  if (savedLead.groupName.isEmpty && creatorTeamId.isNotEmpty) {
+                    final teams = await firestoreService.getTeams();
+                    final team = teams.where((t) => t['id'] == creatorTeamId).firstOrNull;
+                    if (team != null) savedLead.groupName = team['name'] ?? '';
+                  }
+                  if (savedLead.subGroup.isEmpty && creatorGroupId.isNotEmpty) {
+                    final groups = await firestoreService.getGroups();
+                    final group = groups.where((g) => g['id'] == creatorGroupId).firstOrNull;
+                    if (group != null) savedLead.subGroup = group['name'] ?? '';
+                  }
+                  // Auto-populate followers with TL, Manager, Coordinator from same team
+                  final teamFollowers = <String>[];
+                  if (creatorTeamId.isNotEmpty) {
+                    for (final u in allUsers) {
+                      if (u.teamId == creatorTeamId &&
+                          u.email != _currentUser!.email &&
+                          (u.role == UserRole.teamLead ||
+                           u.role == UserRole.manager ||
+                           u.role == UserRole.coordinator)) {
+                        teamFollowers.add(u.email);
+                      }
+                    }
+                  }
+                  savedLead.followers = teamFollowers;
+                } catch (_) {
+                  // Non-critical: can be updated manually later
+                }
                 await _leadService.createLead(savedLead);
                 _loadLeads();
               } catch (e) {
@@ -256,6 +324,9 @@ class _AppRootState extends State<AppRoot> {
     return _currentUser!.role == UserRole.superAdmin ||
         _currentUser!.role == UserRole.admin;
   }
+
+  /// Whether current user can see Admin-level nav items (Email Settings, Cal Settings)
+  bool get _isAdminOrAbove => _isAdmin;
 
   bool _canEditLead(Lead lead) {
     if (_currentUser == null) return false;
@@ -336,10 +407,11 @@ class _AppRootState extends State<AppRoot> {
     // Calendar screen (available to all users)
     screens.add(CalendarScreen(currentUser: _currentUser!));
 
-    // Admin screen visible to all roles - view-only for non-admin users
+    // Admin screen visible to ALL roles (with restricted access for non-admins)
     screens.add(AdminScreen(currentUser: _currentUser!));
 
-    if (_isAdmin) {
+    // Email & Calendar Settings only visible to Admin and SuperAdmin
+    if (_isAdminOrAbove) {
       screens.addAll([
         const EmailSettingsScreen(),
         CalendarSettingsScreen(currentUser: _currentUser!),
@@ -349,7 +421,7 @@ class _AppRootState extends State<AppRoot> {
     return AppShell(
       user: _currentUser!,
       onLogout: _logout,
-      isAdmin: _isAdmin,
+      isAdmin: _isAdminOrAbove,
       screens: screens,
       onRefresh: _refreshAllData,
     );

@@ -38,6 +38,78 @@ class CalendarService {
     }
   }
 
+  // Get meetings by team
+  Future<List<Meeting>> getMeetingsByTeam(String teamId) async {
+    try {
+      final snapshot = await _meetingsRef
+          .where('team_id', isEqualTo: teamId)
+          .get();
+      final meetings = snapshot.docs.map((doc) => Meeting.fromFirestore(doc)).toList();
+      meetings.sort((a, b) => a.startTime.compareTo(b.startTime));
+      debugPrint('CalendarService: Loaded ${meetings.length} meetings for team $teamId');
+      return meetings;
+    } catch (e) {
+      debugPrint('CalendarService: Error loading team meetings: $e');
+      return [];
+    }
+  }
+
+  // Get meetings by group
+  Future<List<Meeting>> getMeetingsByGroup(String groupId) async {
+    try {
+      final snapshot = await _meetingsRef
+          .where('group_id', isEqualTo: groupId)
+          .get();
+      final meetings = snapshot.docs.map((doc) => Meeting.fromFirestore(doc)).toList();
+      meetings.sort((a, b) => a.startTime.compareTo(b.startTime));
+      debugPrint('CalendarService: Loaded ${meetings.length} meetings for group $groupId');
+      return meetings;
+    } catch (e) {
+      debugPrint('CalendarService: Error loading group meetings: $e');
+      return [];
+    }
+  }
+
+  // Get meetings by user (organizer, assigned, or guest)
+  Future<List<Meeting>> getMeetingsByUser(String uid, String email) async {
+    try {
+      // Get meetings where user is organizer
+      final organizerSnapshot = await _meetingsRef
+          .where('organizer_uid', isEqualTo: uid)
+          .get();
+
+      // Get meetings where user is assigned
+      final assignedSnapshot = await _meetingsRef
+          .where('assigned_to', isEqualTo: uid)
+          .get();
+
+      // Combine and deduplicate
+      final Set<String> seenIds = {};
+      final List<Meeting> meetings = [];
+
+      for (final doc in organizerSnapshot.docs) {
+        if (!seenIds.contains(doc.id)) {
+          seenIds.add(doc.id);
+          meetings.add(Meeting.fromFirestore(doc));
+        }
+      }
+
+      for (final doc in assignedSnapshot.docs) {
+        if (!seenIds.contains(doc.id)) {
+          seenIds.add(doc.id);
+          meetings.add(Meeting.fromFirestore(doc));
+        }
+      }
+
+      meetings.sort((a, b) => a.startTime.compareTo(b.startTime));
+      debugPrint('CalendarService: Loaded ${meetings.length} meetings for user $uid');
+      return meetings;
+    } catch (e) {
+      debugPrint('CalendarService: Error loading user meetings: $e');
+      return [];
+    }
+  }
+
   // Get meetings for a specific lead
   Future<List<Meeting>> getMeetingsForLead(String leadId) async {
     try {

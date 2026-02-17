@@ -3,6 +3,7 @@ import '../models/email_template.dart';
 import '../models/lead.dart';
 import '../models/user.dart';
 import '../services/email_service.dart';
+import '../services/lead_service.dart';
 
 class SendEmailDialog extends StatefulWidget {
   final Lead lead;
@@ -89,6 +90,15 @@ class _SendEmailDialogState extends State<SendEmailDialog> {
         userId: widget.currentUser.uid,
         userName: widget.currentUser.name,
       );
+      // Add history entry for email sent
+      try {
+        await LeadService().addLeadHistory(
+          widget.lead.id,
+          'Email Sent',
+          '${_selectedTemplate!.type.label} email sent to ${widget.lead.clientEmail}',
+          widget.currentUser.email,
+        );
+      } catch (_) {}
       if (mounted) {
         Navigator.pop(context, true);
         ScaffoldMessenger.of(context).showSnackBar(
