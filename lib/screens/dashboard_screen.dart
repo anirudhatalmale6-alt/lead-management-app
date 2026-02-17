@@ -8,10 +8,12 @@ import '../services/calendar_service.dart';
 import '../services/firestore_service.dart';
 import '../services/user_service.dart';
 import '../theme/app_theme.dart';
+import 'lead_detail_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   final List<Lead> leads;
-  const DashboardScreen({super.key, required this.leads});
+  final AppUser? currentUser;
+  const DashboardScreen({super.key, required this.leads, this.currentUser});
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -1428,45 +1430,61 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildAgendaItemRow(int index, Lead lead, DateTime? date, Color color, {bool isMissed = false}) {
     final narration = _buildNarration(lead, dateOverride: date);
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: isMissed ? Colors.red.shade50 : Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(8),
-        border: isMissed ? Border.all(color: Colors.red.shade200) : null,
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '$index.',
-            style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 12),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              narration,
-              style: const TextStyle(fontSize: 12, height: 1.4),
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
+    return InkWell(
+      onTap: () => _navigateToLeadDetail(lead),
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: isMissed ? Colors.red.shade50 : Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(8),
+          border: isMissed ? Border.all(color: Colors.red.shade200) : null,
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '$index.',
+              style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 12),
             ),
-          ),
-          if (isMissed && date != null) ...[
-            const SizedBox(width: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: Colors.red.shade100,
-                borderRadius: BorderRadius.circular(8),
-              ),
+            const SizedBox(width: 8),
+            Expanded(
               child: Text(
-                '${DateTime.now().difference(date).inDays}d late',
-                style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.red.shade700),
+                narration,
+                style: const TextStyle(fontSize: 12, height: 1.4),
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
+            if (isMissed && date != null) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '${DateTime.now().difference(date).inDays}d late',
+                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.red.shade700),
+                ),
+              ),
+            ],
           ],
-        ],
+        ),
+      ),
+    );
+  }
+
+  void _navigateToLeadDetail(Lead lead) {
+    if (widget.currentUser == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => LeadDetailScreen(
+          lead: lead,
+          currentUser: widget.currentUser!,
+        ),
       ),
     );
   }
@@ -1823,7 +1841,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
             itemBuilder: (_, i) {
               final lead = allHot[i];
               final narration = _buildNarration(lead);
-              return Container(
+              return InkWell(
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _navigateToLeadDetail(lead);
+                },
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
                 margin: const EdgeInsets.only(bottom: 6),
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
@@ -1850,6 +1874,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                   ],
                 ),
+                ),
               );
             },
           ),
@@ -1863,7 +1888,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildHotLeadRow(int index, Lead lead) {
     final narration = _buildNarration(lead);
-    return Container(
+    return InkWell(
+      onTap: () => _navigateToLeadDetail(lead),
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
@@ -1901,6 +1929,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
           ),
         ],
+      ),
       ),
     );
   }

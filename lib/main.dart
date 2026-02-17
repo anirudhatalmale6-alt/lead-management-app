@@ -394,7 +394,7 @@ class _AppRootState extends State<AppRoot> {
     }
 
     final screens = <Widget>[
-      DashboardScreen(leads: _leads),
+      DashboardScreen(leads: _leads, currentUser: _currentUser),
       PipelineScreen(
         leads: _leads,
         onStageChanged: _changeLeadStage,
