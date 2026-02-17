@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/user.dart';
 import '../services/auth_service.dart';
@@ -109,6 +110,7 @@ class _AuthScreenState extends State<AuthScreen>
       );
 
       if (mounted) {
+        TextInput.finishAutofillContext();
         widget.onLogin(appUser);
       }
     } catch (e) {
@@ -265,6 +267,7 @@ class _AuthScreenState extends State<AuthScreen>
                   ),
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 380),
+                    child: AutofillGroup(
                     child: Form(
                       key: _formKey,
                       child: Column(
@@ -333,6 +336,7 @@ class _AuthScreenState extends State<AuthScreen>
                           TextFormField(
                             controller: _emailController,
                             keyboardType: TextInputType.emailAddress,
+                            autofillHints: const [AutofillHints.email, AutofillHints.username],
                             decoration: InputDecoration(
                               labelText: 'Email',
                               prefixIcon: const Icon(Icons.email_outlined),
@@ -513,6 +517,7 @@ class _AuthScreenState extends State<AuthScreen>
                           ),
                         ],
                       ),
+                    ),
                     ),
                   ),
                 ),

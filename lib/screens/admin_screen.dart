@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 
+import '../models/lead.dart';
 import '../models/user.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
+import '../services/lead_service.dart';
 
 class AdminScreen extends StatefulWidget {
   final AppUser? currentUser;
@@ -52,7 +54,11 @@ class _AdminScreenState extends State<AdminScreen>
   }
 
   /// Number of tabs based on user role
-  int get _tabCount => _canSeeAllTabs ? 4 : 2;
+  int get _tabCount {
+    if (_isSuperAdmin) return 5; // Team, Group, Role, User, Manage Leads
+    if (_canSeeAllTabs) return 4; // Team, Group, Role, User
+    return 2; // Team, Group
+  }
 
   // Mock data
   List<Map<String, dynamic>> _mockTeams = [];
@@ -64,6 +70,16 @@ class _AdminScreenState extends State<AdminScreen>
   // Cached team/group name lookups for display
   Map<String, String> _teamNameCache = {}; // id -> name
   Map<String, String> _groupNameCache = {}; // id -> name
+
+  // Manage Leads tab state
+  final LeadService _leadService = LeadService();
+  List<Lead> _allLeads = [];
+  List<Lead> _filteredLeads = [];
+  bool _leadsLoading = false;
+  final TextEditingController _leadSearchController = TextEditingController();
+  String? _leadFilterHealth;
+  String? _leadFilterStage;
+  final Set<String> _selectedLeadIds = {};
 
   @override
   void initState() {
@@ -234,6 +250,7 @@ class _AdminScreenState extends State<AdminScreen>
   @override
   void dispose() {
     _tabController.dispose();
+    _leadSearchController.dispose();
     super.dispose();
   }
 
@@ -259,6 +276,12 @@ class _AdminScreenState extends State<AdminScreen>
         _buildRoleTab(),
         _buildUserTab(),
       ]);
+    }
+
+    // Only SuperAdmin can see Manage Leads tab (for deleting leads)
+    if (_isSuperAdmin) {
+      tabs.add(const Tab(icon: Icon(Icons.delete_sweep), text: 'Manage Leads'));
+      tabViews.add(_buildManageLeadsTab());
     }
 
     return Scaffold(
@@ -2369,6 +2392,231 @@ class _AdminScreenState extends State<AdminScreen>
   List<String> _getMemberNamesByUids(List<String> uids) {
     return uids.map((uid) => _getUserNameByUid(uid) ?? uid).toList();
   }
+
+  // ===========================================================================
+  // MANAGE LEADS TAB (SuperAdmin only)
+  // ===========================================================================
+
+  Future<void> _loadAllLeads() async {
+    setState(() => _leadsLoading = true);
+    try {
+      final leads = await _leadService.getAllLeads();
+      if (mounted) {
+        setState(() {
+          _allLeads = leads;
+          _applyLeadFilters();
+          _leadsLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _leadsLoading = false);
+        _showSnackBar('Error loading leads: $e');
+      }
+    }
+  }
+
+  void _applyLeadFilters() {
+    var results = _allLeads.toList();
+    final query = _leadSearchController.text.trim().toLowerCase();
+    if (query.isNotEmpty) {
+      results = results.where((l) =>
+        l.clientName.toLowerCase().contains(query) ||
+        l.clientEmail.toLowerCase().contains(query) ||
+        l.clientEmail.toLowerCase().contains(query) ||
+        l.clientCity.toLowerCase().contains(query) ||
+        l.assignedTo.toLowerCase().contains(query) ||
+        l.createdBy.toLowerCase().contains(query)
+      ).toList();
+    }
+    if (_leadFilterHealth != null) {
+      results = results.where((l) => l.health.label == _leadFilterHealth).toList();
+    }
+    if (_leadFilterStage != null) {
+      results = results.where((l) => l.stage.label == _leadFilterStage).toList();
+    }
+    _filteredLeads = results;
+    _selectedLeadIds.removeWhere((id) => !_filteredLeads.any((l) => l.id == id));
+  }
+
+  Future<void> _deleteSelectedLeads() async {
+    if (_selectedLeadIds.isEmpty) return;
+    final count = _selectedLeadIds.length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(children: [
+          Icon(Icons.warning_amber_rounded, color: Colors.red.shade700),
+          const SizedBox(width: 8),
+          const Text('Delete Leads'),
+        ]),
+        content: Text('Are you sure you want to permanently delete $count lead${count > 1 ? "s" : ""}?\n\nThis action cannot be undone.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), style: FilledButton.styleFrom(backgroundColor: Colors.red), child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    showDialog(context: context, barrierDismissible: false, builder: (_) => AlertDialog(
+      content: Row(children: [const CircularProgressIndicator(), const SizedBox(width: 16), Text('Deleting $count lead${count > 1 ? "s" : ""}...')]),
+    ));
+    try {
+      for (final id in _selectedLeadIds.toList()) {
+        await _leadService.deleteLead(id);
+      }
+      if (mounted) {
+        Navigator.pop(context);
+        _selectedLeadIds.clear();
+        _showSnackBar('$count lead${count > 1 ? "s" : ""} deleted successfully');
+        _loadAllLeads();
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context);
+        _showSnackBar('Error deleting leads: $e');
+      }
+    }
+  }
+
+  Widget _buildManageLeadsTab() {
+    if (_allLeads.isEmpty && !_leadsLoading) {
+      Future.microtask(() => _loadAllLeads());
+    }
+    return Column(children: [
+      Container(
+        padding: const EdgeInsets.all(12),
+        color: Colors.grey.shade50,
+        child: Column(children: [
+          Row(children: [
+            Expanded(flex: 3, child: TextField(
+              controller: _leadSearchController,
+              decoration: InputDecoration(
+                hintText: 'Search by name, email, phone, city, assigned to...',
+                prefixIcon: const Icon(Icons.search, size: 20),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                suffixIcon: _leadSearchController.text.isNotEmpty ? IconButton(icon: const Icon(Icons.clear, size: 18), onPressed: () { _leadSearchController.clear(); setState(() => _applyLeadFilters()); }) : null,
+              ),
+              onChanged: (_) => setState(() => _applyLeadFilters()),
+            )),
+            const SizedBox(width: 8),
+            SizedBox(width: 140, child: DropdownButtonFormField<String?>(
+              value: _leadFilterHealth, isDense: true, isExpanded: true,
+              decoration: InputDecoration(labelText: 'Health', labelStyle: const TextStyle(fontSize: 12), contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
+              items: [const DropdownMenuItem<String?>(value: null, child: Text('All', style: TextStyle(fontSize: 12))), ...LeadHealth.values.map((h) => DropdownMenuItem<String?>(value: h.label, child: Text(h.label, style: const TextStyle(fontSize: 12))))],
+              onChanged: (v) => setState(() { _leadFilterHealth = v; _applyLeadFilters(); }),
+            )),
+            const SizedBox(width: 8),
+            SizedBox(width: 140, child: DropdownButtonFormField<String?>(
+              value: _leadFilterStage, isDense: true, isExpanded: true,
+              decoration: InputDecoration(labelText: 'Stage', labelStyle: const TextStyle(fontSize: 12), contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
+              items: [const DropdownMenuItem<String?>(value: null, child: Text('All', style: TextStyle(fontSize: 12))), ...LeadStage.values.map((s) => DropdownMenuItem<String?>(value: s.label, child: Text(s.label, style: const TextStyle(fontSize: 12))))],
+              onChanged: (v) => setState(() { _leadFilterStage = v; _applyLeadFilters(); }),
+            )),
+            const SizedBox(width: 8),
+            IconButton(icon: const Icon(Icons.refresh), onPressed: _loadAllLeads, tooltip: 'Refresh'),
+          ]),
+          if (_selectedLeadIds.isNotEmpty) Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Row(children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.red.shade200)),
+                child: Text('${_selectedLeadIds.length} lead${_selectedLeadIds.length > 1 ? "s" : ""} selected', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red.shade700, fontSize: 13)),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.icon(onPressed: _deleteSelectedLeads, icon: const Icon(Icons.delete, size: 18), label: const Text('Delete Selected'), style: FilledButton.styleFrom(backgroundColor: Colors.red, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8))),
+              const Spacer(),
+              TextButton(onPressed: () => setState(() => _selectedLeadIds.clear()), child: const Text('Clear Selection')),
+            ]),
+          ),
+        ]),
+      ),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        color: Colors.blue.shade50,
+        child: Row(children: [
+          Icon(Icons.info_outline, size: 16, color: Colors.blue.shade700),
+          const SizedBox(width: 6),
+          Text('Showing ${_filteredLeads.length} of ${_allLeads.length} leads', style: TextStyle(fontSize: 12, color: Colors.blue.shade700)),
+          const Spacer(),
+          TextButton.icon(
+            onPressed: () => setState(() {
+              if (_selectedLeadIds.length == _filteredLeads.length) { _selectedLeadIds.clear(); } else { _selectedLeadIds.clear(); for (final l in _filteredLeads) { _selectedLeadIds.add(l.id); } }
+            }),
+            icon: Icon(_selectedLeadIds.length == _filteredLeads.length && _filteredLeads.isNotEmpty ? Icons.deselect : Icons.select_all, size: 16),
+            label: Text(_selectedLeadIds.length == _filteredLeads.length && _filteredLeads.isNotEmpty ? 'Deselect All' : 'Select All', style: const TextStyle(fontSize: 12)),
+          ),
+        ]),
+      ),
+      Expanded(
+        child: _leadsLoading
+            ? const Center(child: CircularProgressIndicator())
+            : _filteredLeads.isEmpty
+                ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.search_off, size: 64, color: Colors.grey.shade300), const SizedBox(height: 8), Text('No leads found', style: TextStyle(color: Colors.grey.shade500, fontSize: 16))]))
+                : SingleChildScrollView(child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: DataTable(
+                      headingRowColor: WidgetStateProperty.all(Colors.grey.shade100),
+                      columnSpacing: 16, dataRowMinHeight: 40, dataRowMaxHeight: 56,
+                      columns: const [
+                        DataColumn(label: SizedBox(width: 30)),
+                        DataColumn(label: Text('Client Name', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                        DataColumn(label: Text('Email', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                        DataColumn(label: Text('City', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                        DataColumn(label: Text('Health', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                        DataColumn(label: Text('Stage', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                        DataColumn(label: Text('Assigned To', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                        DataColumn(label: Text('Created By', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                        DataColumn(label: Text('Created', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                        DataColumn(label: Text('Action', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                      ],
+                      rows: _filteredLeads.map((lead) {
+                        final isSelected = _selectedLeadIds.contains(lead.id);
+                        return DataRow(selected: isSelected, color: isSelected ? WidgetStateProperty.all(Colors.red.shade50) : null, cells: [
+                          DataCell(Checkbox(value: isSelected, onChanged: (v) => setState(() { if (v == true) { _selectedLeadIds.add(lead.id); } else { _selectedLeadIds.remove(lead.id); } }))),
+                          DataCell(Text(lead.clientName, style: const TextStyle(fontSize: 12))),
+                          DataCell(Text(lead.clientEmail, style: const TextStyle(fontSize: 12))),
+                          DataCell(Text(lead.clientCity, style: const TextStyle(fontSize: 12))),
+                          DataCell(_buildLeadHealthBadge(lead.health)),
+                          DataCell(Text(lead.stage.label, style: const TextStyle(fontSize: 12))),
+                          DataCell(Text(lead.assignedTo.split('@').first, style: const TextStyle(fontSize: 12))),
+                          DataCell(Text(lead.createdBy.split('@').first, style: const TextStyle(fontSize: 12))),
+                          DataCell(Text(lead.createdAt != null ? DateFormat('dd MMM yy').format(lead.createdAt!) : '-', style: const TextStyle(fontSize: 11))),
+                          DataCell(IconButton(
+                            icon: Icon(Icons.delete_outline, color: Colors.red.shade400, size: 20), tooltip: 'Delete this lead',
+                            onPressed: () async {
+                              final confirm = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
+                                title: const Text('Delete Lead?'),
+                                content: Text('Delete "${lead.clientName}"? This cannot be undone.'),
+                                actions: [TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')), FilledButton(onPressed: () => Navigator.pop(ctx, true), style: FilledButton.styleFrom(backgroundColor: Colors.red), child: const Text('Delete'))],
+                              ));
+                              if (confirm == true) { await _leadService.deleteLead(lead.id); _showSnackBar('Lead "${lead.clientName}" deleted'); _loadAllLeads(); }
+                            },
+                          )),
+                        ]);
+                      }).toList(),
+                    ),
+                  )),
+      ),
+    ]);
+  }
+
+  Widget _buildLeadHealthBadge(LeadHealth health) {
+    Color bg; Color fg;
+    switch (health) {
+      case LeadHealth.hot: bg = Colors.red.shade100; fg = Colors.red.shade700;
+      case LeadHealth.warm: bg = Colors.orange.shade100; fg = Colors.orange.shade700;
+      default: bg = Colors.grey.shade100; fg = Colors.grey.shade700;
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(10)),
+      child: Text(health.label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: fg)),
+    );
+  }
 }
 
 /// Searchable User Dropdown Widget with Name + ID display
@@ -2549,6 +2797,7 @@ class _SearchableUserDropdownState extends State<_SearchableUserDropdown> {
       ),
     );
   }
+
 }
 
 /// Role Permissions class

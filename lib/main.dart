@@ -54,6 +54,7 @@ class LeadManagementApp extends StatelessWidget {
       theme: AppTheme.lightTheme,
       debugShowCheckedModeBanner: false,
       home: const AppRoot(),
+      builder: (context, child) => SelectionArea(child: child ?? const SizedBox.shrink()),
     );
   }
 }
