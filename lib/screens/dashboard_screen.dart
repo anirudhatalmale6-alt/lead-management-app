@@ -1735,7 +1735,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   // ---------------------------------------------------------------------------
 
   Widget _buildHotLeadsList() {
-    final hotLeads = _hotLeads.take(5).toList();
+    final allHot = _hotLeads;
+    final hotLeads = allHot.take(5).toList();
 
     return Card(
       elevation: 2,
@@ -1774,7 +1775,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
-                      '${_hotLeads.length}',
+                      '${allHot.length}',
                       style: const TextStyle(
                         fontWeight: FontWeight.bold,
                         color: Colors.white,
@@ -1784,7 +1785,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ],
               ),
               const SizedBox(height: 12),
-              ...hotLeads.map((lead) => _buildHotLeadRow(lead)),
+              ...hotLeads.asMap().entries.map((e) => _buildHotLeadRow(e.key + 1, e.value)),
+              if (allHot.length > 5) ...[
+                const SizedBox(height: 4),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: () => _showAllHotLeadsDialog(allHot),
+                    style: TextButton.styleFrom(foregroundColor: Colors.white),
+                    child: const Text('View All', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -1792,7 +1804,65 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildHotLeadRow(Lead lead) {
+  void _showAllHotLeadsDialog(List<Lead> allHot) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.local_fire_department, color: Colors.red.shade400),
+            const SizedBox(width: 8),
+            Text('Hot Leads (${allHot.length})'),
+          ],
+        ),
+        content: SizedBox(
+          width: 600,
+          height: 400,
+          child: ListView.builder(
+            itemCount: allHot.length,
+            itemBuilder: (_, i) {
+              final lead = allHot[i];
+              final narration = _buildNarration(lead);
+              return Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border(left: BorderSide(color: Colors.red.shade400, width: 3)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    CircleAvatar(
+                      radius: 12,
+                      backgroundColor: Colors.red.shade100,
+                      child: Text('${i + 1}', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.red.shade700)),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(narration, style: const TextStyle(fontSize: 12, height: 1.3)),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(color: Colors.orange.shade100, borderRadius: BorderRadius.circular(8)),
+                      child: Text('${lead.rating}', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.orange.shade800)),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHotLeadRow(int index, Lead lead) {
+    final narration = _buildNarration(lead);
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(10),
@@ -1801,22 +1871,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.person, size: 20, color: Colors.red),
-          const SizedBox(width: 10),
+          CircleAvatar(
+            radius: 12,
+            backgroundColor: Colors.red.shade100,
+            child: Text('$index', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.red.shade700)),
+          ),
+          const SizedBox(width: 8),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  lead.clientName,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                Text(
-                  '${lead.stage.label} - ${lead.clientCity.isNotEmpty ? lead.clientCity : "N/A"}',
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-                ),
-              ],
+            child: Text(
+              narration,
+              style: const TextStyle(fontSize: 12, height: 1.3),
             ),
           ),
           Container(
@@ -1826,7 +1892,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               borderRadius: BorderRadius.circular(12),
             ),
             child: Text(
-              'Rating: ${lead.rating}',
+              '${lead.rating}',
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.bold,
