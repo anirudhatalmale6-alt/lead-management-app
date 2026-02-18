@@ -61,10 +61,16 @@
     <p style="color:#757575;">Loading app...</p>
   </div>
   <script>
-    // Clear stale service workers from previous broken deployments
+    // Aggressively clear ALL service workers and their caches
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.getRegistrations().then(function(registrations) {
         for (var r of registrations) { r.unregister(); }
+      });
+    }
+    // Also clear all caches (service worker caches)
+    if ('caches' in window) {
+      caches.keys().then(function(names) {
+        for (var name of names) { caches.delete(name); }
       });
     }
     window.addEventListener('flutter-first-frame', function() {
