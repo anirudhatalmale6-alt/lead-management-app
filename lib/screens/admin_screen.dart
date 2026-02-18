@@ -39,6 +39,14 @@ class _AdminScreenState extends State<AdminScreen>
     return user.role == UserRole.manager;
   }
 
+  /// Safely parse a Firestore date field that could be Timestamp, String, or null
+  static DateTime _parseFirestoreDate(dynamic value) {
+    if (value == null) return DateTime.now();
+    if (value is Timestamp) return value.toDate();
+    if (value is String) return DateTime.tryParse(value) ?? DateTime.now();
+    return DateTime.now();
+  }
+
   /// Whether current user is SuperAdmin (for destructive actions like delete user)
   bool get _isSuperAdmin {
     final user = widget.currentUser;
@@ -160,25 +168,30 @@ class _AdminScreenState extends State<AdminScreen>
           _allUsers = users;
           // Convert Firestore users to AppUser objects and merge with mock
           if (users.isNotEmpty) {
-            final firestoreUsers = users.map((u) {
-              final roleStr = (u['role'] ?? 'member') as String;
-              return AppUser(
-                uid: (u['uid'] ?? u['id'] ?? '') as String,
-                name: (u['display_name'] ?? u['name'] ?? u['email'] ?? '') as String,
-                firstName: (u['first_name'] ?? '') as String,
-                lastName: (u['last_name'] ?? '') as String,
-                email: (u['email'] ?? '') as String,
-                role: UserRoleX.fromSnakeCase(roleStr),
-                isActive: (u['is_active'] ?? true) as bool,
-                phone: (u['phone'] ?? '') as String?,
-                city: (u['city'] ?? '') as String?,
-                country: (u['country'] ?? '') as String?,
-                address: (u['address'] ?? '') as String?,
-                tag: (u['tag'] ?? '') as String?,
-                teamId: (u['team_id'] ?? '') as String?,
-                groupId: (u['group_id'] ?? '') as String?,
-              );
-            }).toList();
+            final firestoreUsers = <AppUser>[];
+            for (final u in users) {
+              try {
+                final roleStr = '${u['role'] ?? 'member'}';
+                firestoreUsers.add(AppUser(
+                  uid: '${u['uid'] ?? u['id'] ?? ''}',
+                  name: '${u['display_name'] ?? u['name'] ?? u['email'] ?? ''}',
+                  firstName: '${u['first_name'] ?? ''}',
+                  lastName: '${u['last_name'] ?? ''}',
+                  email: '${u['email'] ?? ''}',
+                  role: UserRoleX.fromSnakeCase(roleStr),
+                  isActive: u['is_active'] == true || u['is_active'] == 'true',
+                  phone: u['phone']?.toString(),
+                  city: u['city']?.toString(),
+                  country: u['country']?.toString(),
+                  address: u['address']?.toString(),
+                  tag: u['tag']?.toString(),
+                  teamId: u['team_id']?.toString(),
+                  groupId: u['group_id']?.toString(),
+                ));
+              } catch (e) {
+                debugPrint('Error parsing user ${u['email']}: $e');
+              }
+            }
             // Use Firestore users if available, keep mock as fallback
             _mockUsers = firestoreUsers.isNotEmpty ? firestoreUsers : _mockUsers;
           }
@@ -208,12 +221,10 @@ class _AdminScreenState extends State<AdminScreen>
               'tl_name': data['tl_name'] ?? 'N/A',
               'coordinator_uid': data['coordinator_uid'],
               'coordinator_name': data['coordinator_name'] ?? 'N/A',
-              'members': List<String>.from(data['members'] ?? []),
-              'member_names': List<String>.from(data['member_names'] ?? []),
-              'status': data['status'] ?? true,
-              'created_at': data['created_at'] != null
-                  ? (data['created_at'] as Timestamp).toDate()
-                  : DateTime.now(),
+              'members': (data['members'] as List?)?.map((e) => e.toString()).toList() ?? <String>[],
+              'member_names': (data['member_names'] as List?)?.map((e) => e.toString()).toList() ?? <String>[],
+              'status': data['status'] ?? data['is_active'] ?? true,
+              'created_at': _parseFirestoreDate(data['created_at']),
             };
           }).toList();
         });
@@ -805,7 +816,7 @@ class _AdminScreenState extends State<AdminScreen>
               ),
             ),
             Expanded(
-              child: _useMockData ? _buildMockGroupTable(dateFormat) : _buildFirestoreGroupTable(dateFormat),
+              child: _buildMockGroupTable(dateFormat),
             ),
           ],
         ),
@@ -1755,7 +1766,7 @@ class _AdminScreenState extends State<AdminScreen>
               ),
             ),
             Expanded(
-              child: _useMockData ? _buildMockUserTable(dateFormat) : _buildFirestoreUserTable(dateFormat),
+              child: _buildMockUserTable(dateFormat),
             ),
           ],
         ),
