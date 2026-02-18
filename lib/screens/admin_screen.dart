@@ -910,11 +910,15 @@ class _AdminScreenState extends State<AdminScreen>
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance.collection('groups').snapshots(),
       builder: (context, snapshot) {
-        if (snapshot.hasError) return Center(child: Text('Error: ${snapshot.error}'));
+        if (snapshot.hasError) {
+          debugPrint('Groups stream error: ${snapshot.error}');
+          return Center(child: Text('Error loading groups: ${snapshot.error}'));
+        }
         if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
         final docs = snapshot.data?.docs ?? [];
         if (docs.isEmpty) return const Center(child: Text('No groups found. Click "Add Group" to create one.'));
 
+        try {
         return SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: SingleChildScrollView(
@@ -939,15 +943,26 @@ class _AdminScreenState extends State<AdminScreen>
                 final groupId = doc.id;
                 // Combine: users assigned via group_id + explicit member list
                 final groupMembers = _getGroupMemberNames(groupId);
-                final explicitNames = data['member_names'] != null
-                    ? (data['member_names'] as List).cast<String>()
-                    : (data['members'] as List?)?.map((uid) => _getUserNameByUid(uid as String) ?? uid.toString()).toList() ?? <String>[];
+                List<String> explicitNames = [];
+                try {
+                  if (data['member_names'] != null && data['member_names'] is List) {
+                    explicitNames = (data['member_names'] as List).map((e) => e.toString()).toList();
+                  } else if (data['members'] != null && data['members'] is List) {
+                    explicitNames = (data['members'] as List).map((uid) => _getUserNameByUid(uid.toString()) ?? uid.toString()).toList();
+                  }
+                } catch (_) {}
                 final allNames = {...groupMembers, ...explicitNames}.toList();
                 final memberCount = allNames.length;
                 DateTime? createdAt;
-                if (data['created_at'] != null) {
-                  createdAt = (data['created_at'] as Timestamp).toDate();
-                }
+                try {
+                  if (data['created_at'] != null) {
+                    if (data['created_at'] is Timestamp) {
+                      createdAt = (data['created_at'] as Timestamp).toDate();
+                    } else if (data['created_at'] is String) {
+                      createdAt = DateTime.tryParse(data['created_at'] as String);
+                    }
+                  }
+                } catch (_) {}
                 return DataRow(cells: [
                   DataCell(SelectableText('$idx')),
                   DataCell(SelectableText(data['name'] ?? '')),
@@ -1000,6 +1015,10 @@ class _AdminScreenState extends State<AdminScreen>
             ),
           ),
         );
+        } catch (e) {
+          debugPrint('Error rendering groups: $e');
+          return Center(child: Text('Error rendering groups. Please try refreshing.'));
+        }
       },
     );
   }
@@ -1824,12 +1843,17 @@ class _AdminScreenState extends State<AdminScreen>
         }
         if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
         final docs = snapshot.data?.docs ?? [];
-        // If only 1 user returned (likely self due to Firestore rules), show mock data for demo
-        if (docs.isEmpty || docs.length == 1) {
+        if (docs.isEmpty) {
           return _buildMockUserTable(dateFormat);
         }
 
-        final users = docs.map((doc) => AppUser.fromFirestore(doc)).toList();
+        List<AppUser> users;
+        try {
+          users = docs.map((doc) => AppUser.fromFirestore(doc)).toList();
+        } catch (e) {
+          debugPrint('Error parsing users: $e');
+          return _buildMockUserTable(dateFormat);
+        }
         return SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: SingleChildScrollView(

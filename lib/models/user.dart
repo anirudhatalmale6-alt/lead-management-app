@@ -141,12 +141,18 @@ class CustomRole {
 
   factory CustomRole.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
+    DateTime? createdAt;
+    if (data['created_at'] is Timestamp) {
+      createdAt = (data['created_at'] as Timestamp).toDate();
+    } else if (data['created_at'] is String) {
+      createdAt = DateTime.tryParse(data['created_at'] as String);
+    }
     return CustomRole(
       id: doc.id,
       name: data['name'] ?? '',
       permissions: RolePermissions.fromMap(data['permissions']),
       userCount: data['user_count'] ?? 0,
-      createdAt: (data['created_at'] as Timestamp?)?.toDate(),
+      createdAt: createdAt,
     );
   }
 
@@ -207,11 +213,19 @@ class AppUser {
     this.createdBy,
   });
 
+  /// Safely parse a Firestore field that might be Timestamp, String, or null.
+  static DateTime? _parseDate(dynamic value) {
+    if (value == null) return null;
+    if (value is Timestamp) return value.toDate();
+    if (value is String) return DateTime.tryParse(value);
+    return null;
+  }
+
   factory AppUser.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
     return AppUser(
       uid: doc.id,
-      name: data['display_name'] ?? '',
+      name: data['display_name'] ?? data['name'] ?? '',
       firstName: data['first_name'] ?? '',
       lastName: data['last_name'] ?? '',
       email: data['email'] ?? '',
@@ -227,9 +241,9 @@ class AppUser {
       address: data['address'],
       tag: data['tag'],
       profileImageUrl: data['profile_image_url'],
-      createdAt: (data['created_at'] as Timestamp?)?.toDate(),
-      updatedAt: (data['updated_at'] as Timestamp?)?.toDate(),
-      lastLoginAt: (data['last_login_at'] as Timestamp?)?.toDate(),
+      createdAt: _parseDate(data['created_at']),
+      updatedAt: _parseDate(data['updated_at']),
+      lastLoginAt: _parseDate(data['last_login_at']),
       createdBy: data['created_by'],
     );
   }
