@@ -79,6 +79,10 @@ class _AdminScreenState extends State<AdminScreen>
   Map<String, String> _teamNameCache = {}; // id -> name
   Map<String, String> _groupNameCache = {}; // id -> name
 
+  // Debug state for tracking data loading issues
+  String _debugUserLoadStatus = 'not started';
+  String _debugGroupLoadStatus = 'not started';
+
   // Manage Leads tab state
   final LeadService _leadService = LeadService();
   List<Lead> _allLeads = [];
@@ -160,12 +164,17 @@ class _AdminScreenState extends State<AdminScreen>
   }
 
   Future<void> _loadUsersFromFirestore() async {
-    if (_useMockData) return;
+    if (_useMockData) {
+      if (mounted) setState(() => _debugUserLoadStatus = 'skipped (mock mode)');
+      return;
+    }
     try {
+      if (mounted) setState(() => _debugUserLoadStatus = 'loading...');
       final users = await _firestoreService.getAllUsers();
       if (mounted) {
         setState(() {
           _allUsers = users;
+          _debugUserLoadStatus = 'fetched ${users.length} raw docs';
           // Convert Firestore users to AppUser objects and merge with mock
           if (users.isNotEmpty) {
             final firestoreUsers = <AppUser>[];
@@ -190,47 +199,63 @@ class _AdminScreenState extends State<AdminScreen>
                 ));
               } catch (e) {
                 debugPrint('Error parsing user ${u['email']}: $e');
+                _debugUserLoadStatus = 'parse error: $e';
               }
             }
             // Use Firestore users if available, keep mock as fallback
             _mockUsers = firestoreUsers.isNotEmpty ? firestoreUsers : _mockUsers;
+            _debugUserLoadStatus = 'OK: ${_mockUsers.length} users loaded';
+          } else {
+            _debugUserLoadStatus = 'OK: 0 from Firestore, using ${_mockUsers.length} mock';
           }
         });
       }
     } catch (e) {
       debugPrint('Error loading users: $e');
+      if (mounted) setState(() => _debugUserLoadStatus = 'ERROR: $e');
     }
   }
 
   Future<void> _loadGroupsFromFirestore() async {
-    if (_useMockData) return;
+    if (_useMockData) {
+      if (mounted) setState(() => _debugGroupLoadStatus = 'skipped (mock mode)');
+      return;
+    }
     try {
+      if (mounted) setState(() => _debugGroupLoadStatus = 'loading...');
       final snapshot = await FirebaseFirestore.instance.collection('groups').get();
-      if (mounted && snapshot.docs.isNotEmpty) {
+      if (mounted) {
         setState(() {
-          _mockGroups = snapshot.docs.map((doc) {
-            final data = doc.data();
-            return {
-              'id': doc.id,
-              'name': data['name'] ?? '',
-              'team_id': data['team_id'],
-              'team_name': data['team_name'] ?? 'N/A',
-              'manager_uid': data['manager_uid'],
-              'manager_name': data['manager_name'] ?? 'N/A',
-              'tl_uid': data['tl_uid'],
-              'tl_name': data['tl_name'] ?? 'N/A',
-              'coordinator_uid': data['coordinator_uid'],
-              'coordinator_name': data['coordinator_name'] ?? 'N/A',
-              'members': (data['members'] as List?)?.map((e) => e.toString()).toList() ?? <String>[],
-              'member_names': (data['member_names'] as List?)?.map((e) => e.toString()).toList() ?? <String>[],
-              'status': data['status'] ?? data['is_active'] ?? true,
-              'created_at': _parseFirestoreDate(data['created_at']),
-            };
-          }).toList();
+          _debugGroupLoadStatus = 'fetched ${snapshot.docs.length} docs';
+          if (snapshot.docs.isNotEmpty) {
+            _mockGroups = snapshot.docs.map((doc) {
+              final data = doc.data();
+              return {
+                'id': doc.id,
+                'name': data['name'] ?? '',
+                'team_id': data['team_id'],
+                'team_name': data['team_name'] ?? 'N/A',
+                'manager_uid': data['manager_uid'],
+                'manager_name': data['manager_name'] ?? 'N/A',
+                'tl_uid': data['tl_uid'],
+                'tl_name': data['tl_name'] ?? 'N/A',
+                'coordinator_uid': data['coordinator_uid'],
+                'coordinator_name': data['coordinator_name'] ?? 'N/A',
+                'members': (data['members'] as List?)?.map((e) => e.toString()).toList() ?? <String>[],
+                'member_names': (data['member_names'] as List?)?.map((e) => e.toString()).toList() ?? <String>[],
+                'status': data['status'] ?? data['is_active'] ?? true,
+                'created_at': _parseFirestoreDate(data['created_at']),
+              };
+            }).toList();
+            _debugGroupLoadStatus = 'OK: ${_mockGroups.length} groups loaded';
+          } else {
+            _debugGroupLoadStatus = 'OK: 0 from Firestore, using ${_mockGroups.length} mock';
+          }
         });
       }
     } catch (e) {
       debugPrint('Error loading groups: $e');
+      if (mounted) setState(() => _debugGroupLoadStatus = 'ERROR: $e');
     }
   }
 
@@ -796,6 +821,16 @@ class _AdminScreenState extends State<AdminScreen>
       children: [
         Column(
           children: [
+            // DEBUG BANNER - remove after fixing
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(8),
+              color: Colors.blue.shade100,
+              child: Text(
+                'DEBUG: groups=${_mockGroups.length} | status=$_debugGroupLoadStatus',
+                style: const TextStyle(fontSize: 11, color: Colors.black87),
+              ),
+            ),
             Padding(
               padding: const EdgeInsets.all(16),
               child: Row(
@@ -1737,6 +1772,16 @@ class _AdminScreenState extends State<AdminScreen>
       children: [
         Column(
           children: [
+            // DEBUG BANNER - remove after fixing
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(8),
+              color: Colors.blue.shade100,
+              child: Text(
+                'DEBUG: users=${_mockUsers.length} | status=$_debugUserLoadStatus',
+                style: const TextStyle(fontSize: 11, color: Colors.black87),
+              ),
+            ),
             Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
