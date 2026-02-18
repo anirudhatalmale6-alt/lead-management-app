@@ -76,6 +76,7 @@ class _AdminScreenState extends State<AdminScreen>
   List<Lead> _allLeads = [];
   List<Lead> _filteredLeads = [];
   bool _leadsLoading = false;
+  bool _leadsInitialized = false;
   final TextEditingController _leadSearchController = TextEditingController();
   String? _leadFilterHealth;
   String? _leadFilterStage;
@@ -2480,7 +2481,8 @@ class _AdminScreenState extends State<AdminScreen>
   }
 
   Widget _buildManageLeadsTab() {
-    if (_allLeads.isEmpty && !_leadsLoading) {
+    if (!_leadsInitialized && !_leadsLoading) {
+      _leadsInitialized = true;
       Future.microtask(() => _loadAllLeads());
     }
     return Column(children: [
