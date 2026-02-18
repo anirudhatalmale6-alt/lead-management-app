@@ -836,6 +836,9 @@ class _AdminScreenState extends State<AdminScreen>
   }
 
   Widget _buildMockGroupTable(DateFormat dateFormat) {
+    if (_mockGroups.isEmpty) {
+      return const Center(child: Text('No groups found. Loading...'));
+    }
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: SingleChildScrollView(
@@ -855,21 +858,26 @@ class _AdminScreenState extends State<AdminScreen>
           rows: _mockGroups.asMap().entries.map((entry) {
             final idx = entry.key + 1;
             final grp = entry.value;
-            final groupId = grp['id'] as String?;
+            final groupId = grp['id']?.toString();
             // Combine: users assigned via group_id + explicit member list
             final groupMembers = _getGroupMemberNames(groupId);
-            final explicitNames = grp['member_names'] != null
-                ? (grp['member_names'] as List).cast<String>()
-                : (grp['members'] as List?)?.map((uid) => _getUserNameByUid(uid as String) ?? uid.toString()).toList() ?? <String>[];
+            List<String> explicitNames = [];
+            try {
+              if (grp['member_names'] != null && grp['member_names'] is List) {
+                explicitNames = (grp['member_names'] as List).map((e) => e.toString()).toList();
+              } else if (grp['members'] != null && grp['members'] is List) {
+                explicitNames = (grp['members'] as List).map((uid) => _getUserNameByUid(uid.toString()) ?? uid.toString()).toList();
+              }
+            } catch (_) {}
             final allNames = {...groupMembers, ...explicitNames}.toList();
             final memberCount = allNames.length;
             return DataRow(cells: [
-              DataCell(SelectableText('$idx')),
-              DataCell(SelectableText(grp['name'] ?? '')),
-              DataCell(SelectableText(grp['team_name'] ?? 'N/A')),
-              DataCell(SelectableText(grp['manager_name'] ?? _getUserNameByUid(grp['manager_uid']) ?? 'N/A')),
-              DataCell(SelectableText(grp['tl_name'] ?? _getUserNameByUid(grp['tl_uid']) ?? 'N/A')),
-              DataCell(SelectableText(grp['coordinator_name'] ?? _getUserNameByUid(grp['coordinator_uid']) ?? 'N/A')),
+              DataCell(Text('$idx')),
+              DataCell(Text(grp['name'] ?? '')),
+              DataCell(Text(grp['team_name'] ?? 'N/A')),
+              DataCell(Text(grp['manager_name'] ?? _getUserNameByUid(grp['manager_uid']) ?? 'N/A')),
+              DataCell(Text(grp['tl_name'] ?? _getUserNameByUid(grp['tl_uid']) ?? 'N/A')),
+              DataCell(Text(grp['coordinator_name'] ?? _getUserNameByUid(grp['coordinator_uid']) ?? 'N/A')),
               DataCell(
                 InkWell(
                   onTap: () => _showTeamMembersDialog(grp['name'] ?? '', allNames),
@@ -898,8 +906,8 @@ class _AdminScreenState extends State<AdminScreen>
                   ),
                 ),
               ),
-              DataCell(_buildStatusChip(grp['status'] ?? false)),
-              DataCell(SelectableText(grp['created_at'] != null ? dateFormat.format(grp['created_at']) : '')),
+              DataCell(_buildStatusChip(grp['status'] == true)),
+              DataCell(Text(grp['created_at'] != null && grp['created_at'] is DateTime ? dateFormat.format(grp['created_at']) : '')),
               DataCell(_canModify
                 ? Row(
                     mainAxisSize: MainAxisSize.min,
@@ -1785,6 +1793,9 @@ class _AdminScreenState extends State<AdminScreen>
   }
 
   Widget _buildMockUserTable(DateFormat dateFormat) {
+    if (_mockUsers.isEmpty) {
+      return const Center(child: Text('No users found. Loading...'));
+    }
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: SingleChildScrollView(
@@ -1811,22 +1822,22 @@ class _AdminScreenState extends State<AdminScreen>
               color: hasNoTeam ? WidgetStateProperty.all(Colors.orange.shade50) : null,
               onSelectChanged: (_) => _showEditMemberDialog(u),
               cells: [
-                DataCell(SelectableText('$idx')),
-                DataCell(SelectableText(u.name)),
-                DataCell(SelectableText(u.phone ?? '')),
-                DataCell(SelectableText(u.email)),
+                DataCell(Text('$idx')),
+                DataCell(Text(u.name)),
+                DataCell(Text(u.phone ?? '')),
+                DataCell(Text(u.email)),
                 DataCell(hasNoTeam
                   ? Row(children: [
                       Icon(Icons.warning_amber, size: 14, color: Colors.orange.shade700),
                       const SizedBox(width: 4),
                       Text('Not Set', style: TextStyle(color: Colors.orange.shade700, fontSize: 12, fontWeight: FontWeight.w600)),
                     ])
-                  : SelectableText(_getTeamName(u.teamId)),
+                  : Text(_getTeamName(u.teamId)),
                 ),
-                DataCell(SelectableText(_getGroupName(u.groupId))),
-                DataCell(SelectableText(u.tag ?? '')),
-                DataCell(SelectableText(u.role.label)),
-                DataCell(SelectableText(u.lastLoginAt != null ? dateFormat.format(u.lastLoginAt!) : '')),
+                DataCell(Text(_getGroupName(u.groupId))),
+                DataCell(Text(u.tag ?? '')),
+                DataCell(Text(u.role.label)),
+                DataCell(Text(u.lastLoginAt != null ? dateFormat.format(u.lastLoginAt!) : '')),
                 DataCell(_buildStatusChip(u.isActive)),
                 if (_isSuperAdmin)
                   DataCell(
