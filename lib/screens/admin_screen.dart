@@ -872,12 +872,23 @@ class _AdminScreenState extends State<AdminScreen>
 
   Widget _buildMockGroupTable(DateFormat dateFormat) {
     if (_mockGroups.isEmpty) {
-      return const Center(child: Text('No groups found. Loading...'));
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 16),
+            Text('Loading groups... ($_debugGroupLoadStatus)'),
+          ],
+        ),
+      );
     }
-    try {
-      final rows = <DataRow>[];
-      for (var i = 0; i < _mockGroups.length; i++) {
-        final grp = _mockGroups[i];
+    // Use ListView instead of DataTable to avoid rendering issues
+    return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 80),
+      itemCount: _mockGroups.length,
+      itemBuilder: (context, index) {
+        final grp = _mockGroups[index];
         final groupId = grp['id']?.toString();
         final groupMembers = _getGroupMemberNames(groupId);
         List<String> explicitNames = [];
@@ -890,80 +901,75 @@ class _AdminScreenState extends State<AdminScreen>
         } catch (_) {}
         final allNames = {...groupMembers, ...explicitNames}.toList();
         final memberCount = allNames.length;
-        rows.add(DataRow(cells: [
-          DataCell(Text('${i + 1}')),
-          DataCell(Text('${grp['name'] ?? ''}')),
-          DataCell(Text('${grp['team_name'] ?? 'N/A'}')),
-          DataCell(Text('${grp['manager_name'] ?? _getUserNameByUid(grp['manager_uid']) ?? 'N/A'}')),
-          DataCell(Text('${grp['tl_name'] ?? _getUserNameByUid(grp['tl_uid']) ?? 'N/A'}')),
-          DataCell(Text('${grp['coordinator_name'] ?? _getUserNameByUid(grp['coordinator_uid']) ?? 'N/A'}')),
-          DataCell(
-            InkWell(
-              onTap: () => _showTeamMembersDialog('${grp['name'] ?? ''}', allNames),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: memberCount > 0 ? Colors.green.shade50 : Colors.grey.shade100,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: memberCount > 0 ? Colors.green.shade200 : Colors.grey.shade300),
-                    ),
-                    child: Text(
-                      '$memberCount member${memberCount == 1 ? '' : 's'}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: memberCount > 0 ? Colors.green.shade700 : Colors.grey.shade600,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  Icon(Icons.visibility, size: 16, color: Colors.green.shade400),
-                ],
+
+        return Card(
+          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          child: ListTile(
+            leading: CircleAvatar(
+              backgroundColor: Colors.indigo,
+              child: Text(
+                '${index + 1}',
+                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
               ),
             ),
+            title: Text('${grp['name'] ?? ''}', style: const TextStyle(fontWeight: FontWeight.w600)),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Team: ${grp['team_name'] ?? 'N/A'}', style: const TextStyle(fontSize: 12)),
+                Row(
+                  children: [
+                    Text('Mgr: ${grp['manager_name'] ?? 'N/A'}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                    const SizedBox(width: 8),
+                    Text('TL: ${grp['tl_name'] ?? 'N/A'}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                  ],
+                ),
+                Text('Coordinator: ${grp['coordinator_name'] ?? 'N/A'}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    InkWell(
+                      onTap: () => _showTeamMembersDialog('${grp['name'] ?? ''}', allNames),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: memberCount > 0 ? Colors.green.shade50 : Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: memberCount > 0 ? Colors.green.shade200 : Colors.grey.shade300),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              '$memberCount member${memberCount == 1 ? '' : 's'}',
+                              style: TextStyle(fontSize: 12, color: memberCount > 0 ? Colors.green.shade700 : Colors.grey.shade600, fontWeight: FontWeight.w500),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(Icons.visibility, size: 14, color: Colors.green.shade400),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    _buildStatusChip(grp['status'] == true),
+                  ],
+                ),
+              ],
+            ),
+            trailing: _canModify
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(icon: const Icon(Icons.edit, size: 18), onPressed: () => _showEditGroupDialog(grp)),
+                    IconButton(icon: const Icon(Icons.delete, size: 18, color: Colors.red), onPressed: () => _confirmDeleteGroup(grp['id'], grp['name'])),
+                  ],
+                )
+              : null,
+            isThreeLine: true,
           ),
-          DataCell(_buildStatusChip(grp['status'] == true)),
-          DataCell(Text(grp['created_at'] != null && grp['created_at'] is DateTime ? dateFormat.format(grp['created_at']) : '')),
-          DataCell(_canModify
-            ? Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(icon: const Icon(Icons.edit, size: 18), onPressed: () => _showEditGroupDialog(grp)),
-                  IconButton(icon: const Icon(Icons.delete, size: 18, color: Colors.red), onPressed: () => _confirmDeleteGroup(grp['id'], grp['name'])),
-                ],
-              )
-            : const Text('-', style: TextStyle(color: Colors.grey)),
-          ),
-        ]));
-      }
-
-      return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: SingleChildScrollView(
-          child: DataTable(
-            columns: const [
-              DataColumn(label: Text('ID')),
-              DataColumn(label: Text('Group Name')),
-              DataColumn(label: Text('Team')),
-              DataColumn(label: Text('Manager')),
-              DataColumn(label: Text('Team Leader')),
-              DataColumn(label: Text('Coordinator')),
-              DataColumn(label: Text('Members / Employees')),
-              DataColumn(label: Text('Status')),
-              DataColumn(label: Text('Created At')),
-              DataColumn(label: Text('Options')),
-            ],
-            rows: rows,
-          ),
-        ),
-      );
-    } catch (e) {
-      debugPrint('Error building group table: $e');
-      return Center(child: Text('Error loading groups: $e', style: const TextStyle(color: Colors.red)));
-    }
+        );
+      },
+    );
   }
 
   Widget _buildFirestoreGroupTable(DateFormat dateFormat) {
@@ -1845,80 +1851,108 @@ class _AdminScreenState extends State<AdminScreen>
 
   Widget _buildMockUserTable(DateFormat dateFormat) {
     if (_mockUsers.isEmpty) {
-      return const Center(child: Text('No users found. Loading...'));
-    }
-    try {
-      final rows = <DataRow>[];
-      for (var i = 0; i < _mockUsers.length; i++) {
-        final u = _mockUsers[i];
-        final hasNoTeam = u.teamId == null || u.teamId!.isEmpty;
-        final cells = <DataCell>[
-          DataCell(Text('${i + 1}')),
-          DataCell(Text(u.name)),
-          DataCell(Text(u.phone ?? '')),
-          DataCell(Text(u.email)),
-          DataCell(hasNoTeam
-            ? Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.warning_amber, size: 14, color: Colors.orange.shade700),
-                const SizedBox(width: 4),
-                Text('Not Set', style: TextStyle(color: Colors.orange.shade700, fontSize: 12, fontWeight: FontWeight.w600)),
-              ])
-            : Text(_getTeamName(u.teamId)),
-          ),
-          DataCell(Text(_getGroupName(u.groupId))),
-          DataCell(Text(u.tag ?? '')),
-          DataCell(Text(u.role.label)),
-          DataCell(Text(u.lastLoginAt != null ? dateFormat.format(u.lastLoginAt!) : '')),
-          DataCell(_buildStatusChip(u.isActive)),
-        ];
-        if (_isSuperAdmin) {
-          cells.add(
-            DataCell(
-              IconButton(
-                icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
-                tooltip: 'Delete User',
-                onPressed: () => _confirmDeleteUser(u),
-              ),
-            ),
-          );
-        }
-        rows.add(DataRow(
-          color: hasNoTeam ? WidgetStateProperty.all(Colors.orange.shade50) : null,
-          onSelectChanged: (_) => _showEditMemberDialog(u),
-          cells: cells,
-        ));
-      }
-
-      final columns = <DataColumn>[
-        const DataColumn(label: Text('ID')),
-        const DataColumn(label: Text('Full Name')),
-        const DataColumn(label: Text('Mobile')),
-        const DataColumn(label: Text('Email')),
-        const DataColumn(label: Text('Team')),
-        const DataColumn(label: Text('Group')),
-        const DataColumn(label: Text('Tag')),
-        const DataColumn(label: Text('Role')),
-        const DataColumn(label: Text('Last Login')),
-        const DataColumn(label: Text('Status')),
-      ];
-      if (_isSuperAdmin) {
-        columns.add(const DataColumn(label: Text('Actions')));
-      }
-
-      return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: SingleChildScrollView(
-          child: DataTable(
-            showCheckboxColumn: false,
-            columns: columns,
-            rows: rows,
-          ),
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 16),
+            Text('Loading users... ($_debugUserLoadStatus)'),
+          ],
         ),
       );
-    } catch (e) {
-      debugPrint('Error building user table: $e');
-      return Center(child: Text('Error loading users: $e', style: const TextStyle(color: Colors.red)));
     }
+    // Use ListView instead of DataTable to avoid rendering issues
+    return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 80),
+      itemCount: _mockUsers.length,
+      itemBuilder: (context, index) {
+        final u = _mockUsers[index];
+        final hasNoTeam = u.teamId == null || u.teamId!.isEmpty;
+        return Card(
+          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          color: hasNoTeam ? Colors.orange.shade50 : null,
+          child: ListTile(
+            leading: CircleAvatar(
+              backgroundColor: _getRoleColor(u.role),
+              child: Text(
+                '${index + 1}',
+                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+              ),
+            ),
+            title: Text(u.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(u.email, style: const TextStyle(fontSize: 12)),
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    _buildRoleChip(u.role),
+                    const SizedBox(width: 6),
+                    _buildStatusChip(u.isActive),
+                    if (hasNoTeam) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.shade100,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text('No Team', style: TextStyle(fontSize: 10, color: Colors.orange.shade800)),
+                      ),
+                    ],
+                  ],
+                ),
+                if (u.phone != null && u.phone!.isNotEmpty)
+                  Text('Phone: ${u.phone}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                Row(
+                  children: [
+                    Text('Team: ${_getTeamName(u.teamId)}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                    const SizedBox(width: 12),
+                    Text('Group: ${_getGroupName(u.groupId)}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                  ],
+                ),
+              ],
+            ),
+            trailing: _isSuperAdmin
+              ? IconButton(
+                  icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                  tooltip: 'Delete User',
+                  onPressed: () => _confirmDeleteUser(u),
+                )
+              : const Icon(Icons.chevron_right),
+            isThreeLine: true,
+            onTap: () => _showEditMemberDialog(u),
+          ),
+        );
+      },
+    );
+  }
+
+  Color _getRoleColor(UserRole role) {
+    switch (role) {
+      case UserRole.superAdmin: return Colors.deepPurple;
+      case UserRole.admin: return Colors.indigo;
+      case UserRole.manager: return Colors.blue;
+      case UserRole.teamLead: return Colors.teal;
+      case UserRole.coordinator: return Colors.green;
+      case UserRole.member: return Colors.grey;
+    }
+  }
+
+  Widget _buildRoleChip(UserRole role) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: _getRoleColor(role).withOpacity(0.15),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        role.label,
+        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: _getRoleColor(role)),
+      ),
+    );
   }
 
   Widget _buildFirestoreUserTable(DateFormat dateFormat) {
