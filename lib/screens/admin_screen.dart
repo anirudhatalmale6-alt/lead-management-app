@@ -349,6 +349,54 @@ class _AdminScreenState extends State<AdminScreen>
     );
   }
 
+  /// Get list of user names assigned to a given team ID
+  List<String> _getTeamMemberNames(String? teamId) {
+    if (teamId == null || teamId.isEmpty) return [];
+    return _mockUsers
+        .where((u) => u.teamId == teamId)
+        .map((u) => u.name)
+        .toList();
+  }
+
+  /// Get list of user names assigned to a given group ID
+  List<String> _getGroupMemberNames(String? groupId) {
+    if (groupId == null || groupId.isEmpty) return [];
+    return _mockUsers
+        .where((u) => u.groupId == groupId)
+        .map((u) => u.name)
+        .toList();
+  }
+
+  /// Show a dialog listing all members of a team or group
+  void _showTeamMembersDialog(String teamName, List<String> memberNames) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Members of "$teamName"'),
+        content: SizedBox(
+          width: 350,
+          child: memberNames.isEmpty
+              ? const Text('No members assigned to this team yet.')
+              : ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: memberNames.length,
+                  itemBuilder: (_, i) => ListTile(
+                    leading: CircleAvatar(
+                      radius: 16,
+                      child: Text('${i + 1}', style: const TextStyle(fontSize: 12)),
+                    ),
+                    title: Text(memberNames[i]),
+                    dense: true,
+                  ),
+                ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+        ],
+      ),
+    );
+  }
+
   Widget _buildMockTeamList() {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -359,15 +407,47 @@ class _AdminScreenState extends State<AdminScreen>
             DataColumn(label: Text('Team Admin')),
             DataColumn(label: Text('Team Manager')),
             DataColumn(label: Text('Team TL')),
+            DataColumn(label: Text('Members')),
             DataColumn(label: Text('Status')),
             DataColumn(label: Text('Option')),
           ],
           rows: _mockTeams.map((team) {
+            final teamId = team['id'] as String?;
+            final memberNames = _getTeamMemberNames(teamId);
+            final memberCount = memberNames.length;
             return DataRow(cells: [
               DataCell(Text(team['name'] ?? '')),
               DataCell(Text(team['admin_name'] ?? 'N/A')),
               DataCell(Text(team['manager_name'] ?? 'N/A')),
               DataCell(Text(team['tl_name'] ?? 'N/A')),
+              DataCell(
+                InkWell(
+                  onTap: () => _showTeamMembersDialog(team['name'] ?? '', memberNames),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: memberCount > 0 ? Colors.blue.shade50 : Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: memberCount > 0 ? Colors.blue.shade200 : Colors.grey.shade300),
+                        ),
+                        child: Text(
+                          '$memberCount member${memberCount == 1 ? '' : 's'}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: memberCount > 0 ? Colors.blue.shade700 : Colors.grey.shade600,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(Icons.visibility, size: 16, color: Colors.blue.shade400),
+                    ],
+                  ),
+                ),
+              ),
               DataCell(_buildStatusChip(team['status'] ?? false)),
               DataCell(_canModify
                 ? Row(
@@ -404,17 +484,49 @@ class _AdminScreenState extends State<AdminScreen>
                 DataColumn(label: Text('Team Admin')),
                 DataColumn(label: Text('Team Manager')),
                 DataColumn(label: Text('Team TL')),
+                DataColumn(label: Text('Members')),
                 DataColumn(label: Text('Status')),
                 DataColumn(label: Text('Option')),
               ],
               rows: docs.map((doc) {
                 final data = doc.data() as Map<String, dynamic>;
                 data['id'] = doc.id;
+                final teamId = doc.id;
+                final memberNames = _getTeamMemberNames(teamId);
+                final memberCount = memberNames.length;
                 return DataRow(cells: [
                   DataCell(Text(data['name'] ?? '')),
                   DataCell(Text(data['admin_name'] ?? 'N/A')),
                   DataCell(Text(data['manager_name'] ?? 'N/A')),
                   DataCell(Text(data['tl_name'] ?? 'N/A')),
+                  DataCell(
+                    InkWell(
+                      onTap: () => _showTeamMembersDialog(data['name'] ?? '', memberNames),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: memberCount > 0 ? Colors.blue.shade50 : Colors.grey.shade100,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: memberCount > 0 ? Colors.blue.shade200 : Colors.grey.shade300),
+                            ),
+                            child: Text(
+                              '$memberCount member${memberCount == 1 ? '' : 's'}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: memberCount > 0 ? Colors.blue.shade700 : Colors.grey.shade600,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Icon(Icons.visibility, size: 16, color: Colors.blue.shade400),
+                        ],
+                      ),
+                    ),
+                  ),
                   DataCell(_buildStatusChip(data['status'] ?? false)),
                   DataCell(_canModify
                     ? Row(
@@ -732,9 +844,14 @@ class _AdminScreenState extends State<AdminScreen>
           rows: _mockGroups.asMap().entries.map((entry) {
             final idx = entry.key + 1;
             final grp = entry.value;
-            final memberDisplay = grp['member_names'] != null
-                ? (grp['member_names'] as List).join(', ')
-                : (grp['members'] as List?)?.map((uid) => _getUserNameByUid(uid as String) ?? uid).join(', ') ?? '';
+            final groupId = grp['id'] as String?;
+            // Combine: users assigned via group_id + explicit member list
+            final groupMembers = _getGroupMemberNames(groupId);
+            final explicitNames = grp['member_names'] != null
+                ? (grp['member_names'] as List).cast<String>()
+                : (grp['members'] as List?)?.map((uid) => _getUserNameByUid(uid as String) ?? uid.toString()).toList() ?? <String>[];
+            final allNames = {...groupMembers, ...explicitNames}.toList();
+            final memberCount = allNames.length;
             return DataRow(cells: [
               DataCell(SelectableText('$idx')),
               DataCell(SelectableText(grp['name'] ?? '')),
@@ -742,10 +859,34 @@ class _AdminScreenState extends State<AdminScreen>
               DataCell(SelectableText(grp['manager_name'] ?? _getUserNameByUid(grp['manager_uid']) ?? 'N/A')),
               DataCell(SelectableText(grp['tl_name'] ?? _getUserNameByUid(grp['tl_uid']) ?? 'N/A')),
               DataCell(SelectableText(grp['coordinator_name'] ?? _getUserNameByUid(grp['coordinator_uid']) ?? 'N/A')),
-              DataCell(SizedBox(
-                width: 200,
-                child: SelectableText(memberDisplay.isNotEmpty ? memberDisplay : 'N/A', maxLines: 2),
-              )),
+              DataCell(
+                InkWell(
+                  onTap: () => _showTeamMembersDialog(grp['name'] ?? '', allNames),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: memberCount > 0 ? Colors.green.shade50 : Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: memberCount > 0 ? Colors.green.shade200 : Colors.grey.shade300),
+                        ),
+                        child: Text(
+                          '$memberCount member${memberCount == 1 ? '' : 's'}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: memberCount > 0 ? Colors.green.shade700 : Colors.grey.shade600,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(Icons.visibility, size: 16, color: Colors.green.shade400),
+                    ],
+                  ),
+                ),
+              ),
               DataCell(_buildStatusChip(grp['status'] ?? false)),
               DataCell(SelectableText(grp['created_at'] != null ? dateFormat.format(grp['created_at']) : '')),
               DataCell(_canModify
@@ -795,9 +936,14 @@ class _AdminScreenState extends State<AdminScreen>
                 final doc = entry.value;
                 final data = doc.data() as Map<String, dynamic>;
                 data['id'] = doc.id;
-                final memberDisplay = data['member_names'] != null
-                    ? (data['member_names'] as List).join(', ')
-                    : (data['members'] as List?)?.map((uid) => _getUserNameByUid(uid as String) ?? uid).join(', ') ?? '';
+                final groupId = doc.id;
+                // Combine: users assigned via group_id + explicit member list
+                final groupMembers = _getGroupMemberNames(groupId);
+                final explicitNames = data['member_names'] != null
+                    ? (data['member_names'] as List).cast<String>()
+                    : (data['members'] as List?)?.map((uid) => _getUserNameByUid(uid as String) ?? uid.toString()).toList() ?? <String>[];
+                final allNames = {...groupMembers, ...explicitNames}.toList();
+                final memberCount = allNames.length;
                 DateTime? createdAt;
                 if (data['created_at'] != null) {
                   createdAt = (data['created_at'] as Timestamp).toDate();
@@ -809,10 +955,34 @@ class _AdminScreenState extends State<AdminScreen>
                   DataCell(SelectableText(data['manager_name'] ?? 'N/A')),
                   DataCell(SelectableText(data['tl_name'] ?? 'N/A')),
                   DataCell(SelectableText(data['coordinator_name'] ?? 'N/A')),
-                  DataCell(SizedBox(
-                    width: 200,
-                    child: SelectableText(memberDisplay.isNotEmpty ? memberDisplay : 'N/A', maxLines: 2),
-                  )),
+                  DataCell(
+                    InkWell(
+                      onTap: () => _showTeamMembersDialog(data['name'] ?? '', allNames),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: memberCount > 0 ? Colors.green.shade50 : Colors.grey.shade100,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: memberCount > 0 ? Colors.green.shade200 : Colors.grey.shade300),
+                            ),
+                            child: Text(
+                              '$memberCount member${memberCount == 1 ? '' : 's'}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: memberCount > 0 ? Colors.green.shade700 : Colors.grey.shade600,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Icon(Icons.visibility, size: 16, color: Colors.green.shade400),
+                        ],
+                      ),
+                    ),
+                  ),
                   DataCell(_buildStatusChip(data['status'] ?? false)),
                   DataCell(SelectableText(createdAt != null ? dateFormat.format(createdAt) : '')),
                   DataCell(_canModify
