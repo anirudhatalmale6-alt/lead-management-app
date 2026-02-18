@@ -54,7 +54,11 @@ class LeadManagementApp extends StatelessWidget {
       theme: AppTheme.lightTheme,
       debugShowCheckedModeBanner: false,
       home: const AppRoot(),
-      builder: (context, child) => SelectionArea(child: child ?? const SizedBox.shrink()),
+      // NOTE: Removed global SelectionArea wrapper — it conflicts with
+      // DataTable selection (onSelectChanged / checkbox) in admin_screen,
+      // causing blank/grey render errors on User/Group tabs.
+      // Individual screens that need text-selection (e.g. LeadDetailScreen)
+      // wrap themselves in SelectionArea locally.
     );
   }
 }
