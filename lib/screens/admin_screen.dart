@@ -1590,17 +1590,18 @@ class _AdminScreenState extends State<AdminScreen>
       child: SingleChildScrollView(
         child: DataTable(
           showCheckboxColumn: false,
-          columns: const [
-            DataColumn(label: Text('ID')),
-            DataColumn(label: Text('Full Name')),
-            DataColumn(label: Text('Mobile')),
-            DataColumn(label: Text('Email')),
-            DataColumn(label: Text('Team')),
-            DataColumn(label: Text('Group')),
-            DataColumn(label: Text('Tag')),
-            DataColumn(label: Text('Role')),
-            DataColumn(label: Text('Last Login')),
-            DataColumn(label: Text('Status')),
+          columns: [
+            const DataColumn(label: Text('ID')),
+            const DataColumn(label: Text('Full Name')),
+            const DataColumn(label: Text('Mobile')),
+            const DataColumn(label: Text('Email')),
+            const DataColumn(label: Text('Team')),
+            const DataColumn(label: Text('Group')),
+            const DataColumn(label: Text('Tag')),
+            const DataColumn(label: Text('Role')),
+            const DataColumn(label: Text('Last Login')),
+            const DataColumn(label: Text('Status')),
+            if (_isSuperAdmin) const DataColumn(label: Text('Actions')),
           ],
           rows: _mockUsers.asMap().entries.map((entry) {
             final idx = entry.key + 1;
@@ -1627,6 +1628,14 @@ class _AdminScreenState extends State<AdminScreen>
                 DataCell(SelectableText(u.role.label)),
                 DataCell(SelectableText(u.lastLoginAt != null ? dateFormat.format(u.lastLoginAt!) : '')),
                 DataCell(_buildStatusChip(u.isActive)),
+                if (_isSuperAdmin)
+                  DataCell(
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                      tooltip: 'Delete User',
+                      onPressed: () => _confirmDeleteUser(u),
+                    ),
+                  ),
               ],
             );
           }).toList(),
@@ -1656,17 +1665,18 @@ class _AdminScreenState extends State<AdminScreen>
           child: SingleChildScrollView(
             child: DataTable(
               showCheckboxColumn: false,
-              columns: const [
-                DataColumn(label: Text('ID')),
-                DataColumn(label: Text('Full Name')),
-                DataColumn(label: Text('Mobile')),
-                DataColumn(label: Text('Email')),
-                DataColumn(label: Text('Team')),
-                DataColumn(label: Text('Group')),
-                DataColumn(label: Text('Tag')),
-                DataColumn(label: Text('Role')),
-                DataColumn(label: Text('Last Login')),
-                DataColumn(label: Text('Status')),
+              columns: [
+                const DataColumn(label: Text('ID')),
+                const DataColumn(label: Text('Full Name')),
+                const DataColumn(label: Text('Mobile')),
+                const DataColumn(label: Text('Email')),
+                const DataColumn(label: Text('Team')),
+                const DataColumn(label: Text('Group')),
+                const DataColumn(label: Text('Tag')),
+                const DataColumn(label: Text('Role')),
+                const DataColumn(label: Text('Last Login')),
+                const DataColumn(label: Text('Status')),
+                if (_isSuperAdmin) const DataColumn(label: Text('Actions')),
               ],
               rows: users.asMap().entries.map((entry) {
                 final idx = entry.key + 1;
@@ -1693,6 +1703,14 @@ class _AdminScreenState extends State<AdminScreen>
                     DataCell(SelectableText(u.role.label)),
                     DataCell(SelectableText(u.lastLoginAt != null ? dateFormat.format(u.lastLoginAt!) : '')),
                     DataCell(_buildStatusChip(u.isActive)),
+                    if (_isSuperAdmin)
+                      DataCell(
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                          tooltip: 'Delete User',
+                          onPressed: () => _confirmDeleteUser(u),
+                        ),
+                      ),
                   ],
                 );
               }).toList(),
@@ -2110,36 +2128,8 @@ class _AdminScreenState extends State<AdminScreen>
                     width: double.infinity,
                     child: OutlinedButton.icon(
                       onPressed: isLoading ? null : () {
-                        showDialog(
-                          context: ctx2,
-                          builder: (dCtx) => AlertDialog(
-                            title: const Text('Delete User'),
-                            content: Text('Are you sure you want to permanently delete "${user.name}"?\n\nThis action cannot be undone. All leads assigned to this user will need to be reassigned.'),
-                            actions: [
-                              TextButton(onPressed: () => Navigator.pop(dCtx), child: const Text('Cancel')),
-                              FilledButton(
-                                style: FilledButton.styleFrom(backgroundColor: Colors.red),
-                                onPressed: () async {
-                                  Navigator.pop(dCtx);
-                                  setSheetState(() => isLoading = true);
-                                  try {
-                                    if (!_useMockData) {
-                                      await FirebaseFirestore.instance.collection('users').doc(user.uid).delete();
-                                    } else {
-                                      setState(() => _mockUsers.removeWhere((u) => u.uid == user.uid));
-                                    }
-                                    Navigator.pop(ctx2);
-                                    _showSnackBar('User "${user.name}" deleted');
-                                  } catch (e) {
-                                    setSheetState(() => isLoading = false);
-                                    _showSnackBar('Error deleting user: $e', isError: true);
-                                  }
-                                },
-                                child: const Text('Delete'),
-                              ),
-                            ],
-                          ),
-                        );
+                        Navigator.pop(ctx2);
+                        _confirmDeleteUser(user);
                       },
                       icon: const Icon(Icons.delete_forever, color: Colors.red),
                       label: const Text('Delete User', style: TextStyle(color: Colors.red)),
@@ -2152,6 +2142,51 @@ class _AdminScreenState extends State<AdminScreen>
           ),
         );
         },
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // DELETE USER — SuperAdmin only
+  // ===========================================================================
+
+  void _confirmDeleteUser(AppUser user) {
+    showDialog(
+      context: context,
+      builder: (dCtx) => AlertDialog(
+        title: const Text('Delete User'),
+        content: Text(
+          'Are you sure you want to permanently delete "${user.name}"?\n\n'
+          'This action cannot be undone. All leads assigned to this user will need to be reassigned.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () async {
+              Navigator.pop(dCtx);
+              try {
+                if (!_useMockData) {
+                  await FirebaseFirestore.instance
+                      .collection('users')
+                      .doc(user.uid)
+                      .delete();
+                } else {
+                  setState(
+                      () => _mockUsers.removeWhere((u) => u.uid == user.uid));
+                }
+                _loadUsersFromFirestore();
+                _showSnackBar('User "${user.name}" deleted');
+              } catch (e) {
+                _showSnackBar('Error deleting user: $e', isError: true);
+              }
+            },
+            child: const Text('Delete'),
+          ),
+        ],
       ),
     );
   }
