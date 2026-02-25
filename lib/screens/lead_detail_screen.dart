@@ -144,7 +144,42 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
 
   Future<void> _loadMeetings() async {
     try {
+      debugPrint('LeadDetail: Loading meetings for lead ${widget.lead.id}');
       final meetings = await _calendarService.getMeetingsForLead(widget.lead.id);
+      debugPrint('LeadDetail: Got ${meetings.length} meetings from collection');
+
+      // If no meetings found in collection but lead has meeting info,
+      // create a synthetic meeting from the lead fields so it appears in tabs
+      if (meetings.isEmpty && widget.lead.meetingDate != null) {
+        debugPrint('LeadDetail: No meetings in collection, creating from lead fields');
+        final lead = widget.lead;
+        final timeParts = lead.meetingTime.split(':');
+        final hour = timeParts.isNotEmpty ? int.tryParse(timeParts[0]) ?? 0 : 0;
+        final minute = timeParts.length > 1 ? int.tryParse(timeParts[1]) ?? 0 : 0;
+        final startTime = DateTime(
+          lead.meetingDate!.year,
+          lead.meetingDate!.month,
+          lead.meetingDate!.day,
+          hour,
+          minute,
+        );
+        meetings.add(Meeting(
+          id: 'lead_${lead.id}',
+          title: lead.meetingAgenda.label,
+          description: lead.meetingAgenda.label,
+          startTime: startTime,
+          endTime: startTime.add(const Duration(minutes: 30)),
+          type: MeetingType.googleMeet,
+          status: MeetingStatus.scheduled,
+          leadId: lead.id,
+          leadName: lead.clientName,
+          meetLink: lead.meetingLink.isNotEmpty ? lead.meetingLink : null,
+          createdBy: widget.currentUser?.email ?? '',
+          createdAt: DateTime.now(),
+          organizerUid: widget.currentUser?.uid,
+        ));
+      }
+
       if (mounted) {
         setState(() {
           _meetings = meetings;
@@ -153,8 +188,43 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
         });
       }
     } catch (e) {
+      debugPrint('LeadDetail: Error loading meetings: $e');
+      // On error, try to show meeting info from lead document as fallback
       if (mounted) {
-        setState(() => _loadingMeetings = false);
+        final lead = widget.lead;
+        final fallbackMeetings = <Meeting>[];
+        if (lead.meetingDate != null) {
+          final timeParts = lead.meetingTime.split(':');
+          final hour = timeParts.isNotEmpty ? int.tryParse(timeParts[0]) ?? 0 : 0;
+          final minute = timeParts.length > 1 ? int.tryParse(timeParts[1]) ?? 0 : 0;
+          final startTime = DateTime(
+            lead.meetingDate!.year,
+            lead.meetingDate!.month,
+            lead.meetingDate!.day,
+            hour,
+            minute,
+          );
+          fallbackMeetings.add(Meeting(
+            id: 'lead_${lead.id}',
+            title: lead.meetingAgenda.label,
+            description: lead.meetingAgenda.label,
+            startTime: startTime,
+            endTime: startTime.add(const Duration(minutes: 30)),
+            type: MeetingType.googleMeet,
+            status: MeetingStatus.scheduled,
+            leadId: lead.id,
+            leadName: lead.clientName,
+            meetLink: lead.meetingLink.isNotEmpty ? lead.meetingLink : null,
+            createdBy: widget.currentUser?.email ?? '',
+            createdAt: DateTime.now(),
+            organizerUid: widget.currentUser?.uid,
+          ));
+        }
+        setState(() {
+          _meetings = fallbackMeetings;
+          _loadingMeetings = false;
+          _buildCombinedTimeline();
+        });
       }
     }
   }
@@ -2169,7 +2239,11 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
                           topRight: Radius.circular(16),
                         ),
                       ),
-                      child: Row(
+                      child: Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        alignment: WrapAlignment.spaceBetween,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -2186,7 +2260,6 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
                               ),
                             ),
                           ),
-                          const SizedBox(width: 8),
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                             decoration: BoxDecoration(
@@ -2202,7 +2275,6 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
                               ),
                             ),
                           ),
-                          const Spacer(),
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
@@ -2416,7 +2488,11 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
                           topRight: Radius.circular(16),
                         ),
                       ),
-                      child: Row(
+                      child: Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        alignment: WrapAlignment.spaceBetween,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -2433,7 +2509,6 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
                               ),
                             ),
                           ),
-                          const SizedBox(width: 8),
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                             decoration: BoxDecoration(
@@ -2449,7 +2524,6 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
                               ),
                             ),
                           ),
-                          const Spacer(),
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
@@ -3104,19 +3178,50 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
                   ),
               ],
             ),
-            if (meeting.meetLink != null && meeting.meetLink!.isNotEmpty && meeting.meetLink != 'pending') ...[
-              const SizedBox(height: 12),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: meeting.meetLink != null && meeting.meetLink!.isNotEmpty && meeting.meetLink != 'pending'
+                  ? FilledButton.icon(
+                      onPressed: () => _launchUrl(meeting.meetLink!),
+                      icon: const Icon(Icons.video_call, size: 18),
+                      label: const Text('Join Meeting'),
+                    )
+                  : OutlinedButton.icon(
+                      onPressed: () => _openEditMeetingDialog(meeting),
+                      icon: const Icon(Icons.video_call, size: 18),
+                      label: const Text('Join Meeting (Add Link)'),
+                      style: OutlinedButton.styleFrom(foregroundColor: Colors.green.shade700),
+                    ),
+            ),
+            // Edit button - only for real meetings (not synthetic from lead fields)
+            if (!meeting.id.startsWith('lead_')) ...[
+              const SizedBox(height: 8),
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
-                  onPressed: () => _launchUrl(meeting.meetLink!),
-                  icon: const Icon(Icons.video_call, size: 18),
-                  label: const Text('Join Google Meet'),
+                  onPressed: () => _openEditMeetingDialog(meeting),
+                  icon: const Icon(Icons.edit, size: 18),
+                  label: const Text('Edit Meeting'),
+                  style: OutlinedButton.styleFrom(foregroundColor: Colors.blue.shade700),
                 ),
               ),
             ],
           ],
         ),
+      ),
+    );
+  }
+
+  void _openEditMeetingDialog(Meeting meeting) {
+    if (widget.currentUser == null) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => ScheduleMeetingDialog(
+        currentUser: widget.currentUser!,
+        lead: widget.lead,
+        existingMeeting: meeting,
+        onMeetingCreated: _loadMeetings,
       ),
     );
   }
@@ -3141,9 +3246,16 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
   }
 
   Future<void> _launchUrl(String url) async {
-    final uri = Uri.parse(url);
-    if (await canLaunchUrl(uri)) {
+    final urlStr = url.startsWith('http') ? url : 'https://$url';
+    final uri = Uri.parse(urlStr);
+    try {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open link: $url'), backgroundColor: Colors.red),
+        );
+      }
     }
   }
 

@@ -5,12 +5,14 @@ import '../models/lead.dart';
 import '../models/user.dart';
 import '../services/calendar_service.dart';
 import '../services/lead_service.dart';
+import '../services/google_calendar_service.dart';
 
 class ScheduleMeetingDialog extends StatefulWidget {
   final Lead? lead;
   final AppUser currentUser;
   final VoidCallback? onMeetingCreated;
   final DateTime? preselectedDate;
+  final Meeting? existingMeeting; // For edit mode
 
   const ScheduleMeetingDialog({
     super.key,
@@ -18,7 +20,10 @@ class ScheduleMeetingDialog extends StatefulWidget {
     required this.currentUser,
     this.onMeetingCreated,
     this.preselectedDate,
+    this.existingMeeting,
   });
+
+  bool get isEditMode => existingMeeting != null;
 
   @override
   State<ScheduleMeetingDialog> createState() => _ScheduleMeetingDialogState();
@@ -28,9 +33,11 @@ class _ScheduleMeetingDialogState extends State<ScheduleMeetingDialog> {
   final _formKey = GlobalKey<FormState>();
   final CalendarService _calendarService = CalendarService();
   final LeadService _leadService = LeadService();
+  final GoogleCalendarService _googleCalendarService = GoogleCalendarService();
 
   late TextEditingController _titleController;
   late TextEditingController _descriptionController;
+  late TextEditingController _meetingLinkController;
   late TextEditingController _guestEmailController;
 
   MeetingType _selectedType = MeetingType.googleMeet;
@@ -49,15 +56,36 @@ class _ScheduleMeetingDialogState extends State<ScheduleMeetingDialog> {
     super.initState();
     _titleController = TextEditingController();
     _descriptionController = TextEditingController();
+    _meetingLinkController = TextEditingController();
     _guestEmailController = TextEditingController();
 
-    // Use preselected date if provided, otherwise use tomorrow
-    _selectedDate = widget.preselectedDate ?? DateTime.now().add(const Duration(days: 1));
+    if (widget.isEditMode) {
+      // Edit mode: pre-fill from existing meeting
+      final m = widget.existingMeeting!;
+      _titleController.text = m.title;
+      _descriptionController.text = m.description ?? '';
+      _meetingLinkController.text = m.meetLink ?? '';
+      _selectedType = m.type;
+      _selectedDate = DateTime(m.startTime.year, m.startTime.month, m.startTime.day);
+      _selectedTime = TimeOfDay(hour: m.startTime.hour, minute: m.startTime.minute);
+      _duration = m.endTime.difference(m.startTime).inMinutes;
+      if (_duration <= 0) _duration = 30;
+      // Clamp to valid values
+      if (![15, 30, 45, 60, 90, 120].contains(_duration)) {
+        _duration = _duration <= 15 ? 15 : _duration <= 30 ? 30 : _duration <= 45 ? 45 : _duration <= 60 ? 60 : _duration <= 90 ? 90 : 120;
+      }
+      _guests.addAll(m.guests);
+    } else {
+      // Use preselected date if provided, otherwise use tomorrow
+      _selectedDate = widget.preselectedDate ?? DateTime.now().add(const Duration(days: 1));
+    }
 
     // If a lead was passed in, pre-select it
     if (widget.lead != null) {
       _selectedLead = widget.lead;
-      _onLeadSelected(widget.lead);
+      if (!widget.isEditMode) {
+        _onLeadSelected(widget.lead);
+      }
     }
 
     _loadLeads();
@@ -65,7 +93,59 @@ class _ScheduleMeetingDialogState extends State<ScheduleMeetingDialog> {
 
   Future<void> _loadLeads() async {
     try {
-      final leads = await _leadService.getAllLeads();
+      List<Lead> leads;
+      final user = widget.currentUser;
+
+      // Load leads based on user role
+      switch (user.role) {
+        case UserRole.superAdmin:
+          leads = await _leadService.getAllLeads();
+          break;
+        case UserRole.admin:
+          if (user.teamId != null && user.teamId!.isNotEmpty) {
+            final teamLeads = await _leadService.getLeadsByTeam(user.teamId!);
+            final userLeads = await _leadService.getLeadsForUser(user.email, ownerUid: user.uid);
+            final seen = <String>{};
+            leads = [];
+            for (final l in [...teamLeads, ...userLeads]) {
+              if (seen.add(l.id)) leads.add(l);
+            }
+          } else {
+            leads = await _leadService.getAllLeads();
+          }
+          break;
+        case UserRole.manager:
+        case UserRole.teamLead:
+          if (user.teamId != null && user.teamId!.isNotEmpty) {
+            final teamLeads = await _leadService.getLeadsByTeam(user.teamId!);
+            final userLeads = await _leadService.getLeadsForUser(user.email, ownerUid: user.uid);
+            final seen = <String>{};
+            leads = [];
+            for (final l in [...teamLeads, ...userLeads]) {
+              if (seen.add(l.id)) leads.add(l);
+            }
+          } else {
+            leads = await _leadService.getLeadsForUser(user.email, ownerUid: user.uid);
+          }
+          break;
+        case UserRole.coordinator:
+          if (user.groupId != null && user.groupId!.isNotEmpty) {
+            final groupLeads = await _leadService.getLeadsByGroup(user.groupId!);
+            final userLeads = await _leadService.getLeadsForUser(user.email, ownerUid: user.uid);
+            final seen = <String>{};
+            leads = [];
+            for (final l in [...groupLeads, ...userLeads]) {
+              if (seen.add(l.id)) leads.add(l);
+            }
+          } else {
+            leads = await _leadService.getLeadsForUser(user.email, ownerUid: user.uid);
+          }
+          break;
+        case UserRole.member:
+          leads = await _leadService.getLeadsForUser(user.email, ownerUid: user.uid);
+          break;
+      }
+
       if (mounted) {
         setState(() {
           _leads = leads;
@@ -112,6 +192,7 @@ class _ScheduleMeetingDialogState extends State<ScheduleMeetingDialog> {
   void dispose() {
     _titleController.dispose();
     _descriptionController.dispose();
+    _meetingLinkController.dispose();
     _guestEmailController.dispose();
     super.dispose();
   }
@@ -171,41 +252,138 @@ class _ScheduleMeetingDialogState extends State<ScheduleMeetingDialog> {
       final leadToUse = widget.lead ?? _selectedLead;
       debugPrint('ScheduleMeetingDialog: widget.lead=${widget.lead?.id}, _selectedLead=${_selectedLead?.id}, leadToUse=${leadToUse?.id}');
 
-      final meeting = Meeting(
-        id: '',
+      // Auto-generate Google Meet link if no manual link provided
+      String meetLink = _meetingLinkController.text.trim();
+      String? googleEventId;
+
+      if (meetLink.isEmpty && !widget.isEditMode) {
+        // Try to create Google Calendar event with Meet link
+        try {
+          final gcConfig = await _googleCalendarService.getConfig();
+          if (gcConfig != null && gcConfig.isConfigured) {
+            final tempMeeting = Meeting(
+              id: '',
+              title: _titleController.text.trim(),
+              description: _descriptionController.text.trim(),
+              startTime: startDateTime,
+              endTime: endDateTime,
+              type: _selectedType,
+              status: MeetingStatus.scheduled,
+              guests: _guests,
+              createdBy: widget.currentUser.email,
+              createdAt: DateTime.now(),
+            );
+
+            final result = await _googleCalendarService.createCalendarEvent(
+              meeting: tempMeeting,
+              config: gcConfig,
+            );
+
+            if (result != null) {
+              meetLink = result['meetLink'] ?? '';
+              googleEventId = result['eventId'];
+              debugPrint('Google Meet link auto-created: $meetLink');
+            }
+          }
+        } catch (e) {
+          debugPrint('Google Calendar auto-create failed: $e');
+          // Continue without Meet link - not a fatal error
+        }
+      }
+
+      // Update the link controller so downstream code (history, lead update) uses it
+      if (meetLink.isNotEmpty && _meetingLinkController.text.trim().isEmpty) {
+        _meetingLinkController.text = meetLink;
+      }
+
+      if (widget.isEditMode) {
+        // Update existing meeting
+        await _calendarService.updateMeeting(widget.existingMeeting!.id, {
+          'title': _titleController.text.trim(),
+          'description': _descriptionController.text.trim(),
+          'start_time': Timestamp.fromDate(startDateTime),
+          'end_time': Timestamp.fromDate(endDateTime),
+          'type': _selectedType.toSnakeCase(),
+          'lead_id': leadToUse?.id,
+          'lead_name': leadToUse?.clientName,
+          'guests': _guests.map((g) => g.toMap()).toList(),
+          'meet_link': meetLink,
+        });
+      } else {
+        // Create new meeting
+        // If meeting is for a lead assigned to someone else, use lead's assignedTo
+        // so the assigned employee can also see this meeting on their calendar
+        String meetingAssignedTo = widget.currentUser.uid;
+        if (leadToUse != null && leadToUse.assignedTo.isNotEmpty) {
+          meetingAssignedTo = leadToUse.assignedTo;
+        }
+
+        final meeting = Meeting(
+          id: '',
+          title: _titleController.text.trim(),
+          description: _descriptionController.text.trim(),
+          startTime: startDateTime,
+          endTime: endDateTime,
+          type: _selectedType,
+          status: MeetingStatus.scheduled,
+          leadId: leadToUse?.id,
+          leadName: leadToUse?.clientName,
+          guests: _guests,
+          meetLink: meetLink.isNotEmpty ? meetLink : null,
+          googleEventId: googleEventId,
+          createdBy: widget.currentUser.email,
+          createdAt: DateTime.now(),
+          organizerUid: widget.currentUser.uid,
+          assignedTo: meetingAssignedTo,
+          teamId: widget.currentUser.teamId ?? leadToUse?.teamId,
+          groupId: widget.currentUser.groupId ?? leadToUse?.groupId,
+        );
+
+        await _calendarService.createMeeting(meeting);
+      }
+
+      // Add history entry for the lead if a lead is associated
+      // AND update the lead's meeting fields for dashboard sync
+      if (leadToUse != null && leadToUse.id.isNotEmpty) {
+        final historyMeetLink = _meetingLinkController.text.trim();
+        final meetingForHistory = Meeting(
+          id: widget.isEditMode ? widget.existingMeeting!.id : '',
+          title: _titleController.text.trim(),
+          description: _descriptionController.text.trim(),
+          startTime: startDateTime,
+          endTime: endDateTime,
+          type: _selectedType,
+          status: widget.isEditMode ? widget.existingMeeting!.status : MeetingStatus.scheduled,
+          leadId: leadToUse.id,
+          leadName: leadToUse.clientName,
+          guests: _guests,
+          meetLink: historyMeetLink.isNotEmpty ? historyMeetLink : null,
+          createdBy: widget.currentUser.email,
+          createdAt: DateTime.now(),
+          organizerUid: widget.currentUser.uid,
+        );
+        await _addMeetingHistoryToLead(leadToUse.id, meetingForHistory, isEdit: widget.isEditMode);
+        await _updateLeadMeetingInfo(leadToUse.id, meetingForHistory);
+      }
+
+      // Send meeting notification emails to host and guests
+      await _sendMeetingNotificationEmails(
         title: _titleController.text.trim(),
         description: _descriptionController.text.trim(),
         startTime: startDateTime,
         endTime: endDateTime,
         type: _selectedType,
-        status: MeetingStatus.scheduled,
-        leadId: leadToUse?.id,
-        leadName: leadToUse?.clientName,
         guests: _guests,
-        createdBy: widget.currentUser.email,
-        createdAt: DateTime.now(),
-        organizerUid: widget.currentUser.uid,
-        assignedTo: widget.currentUser.uid,
-        teamId: widget.currentUser.teamId,
-        groupId: widget.currentUser.groupId,
+        leadName: leadToUse?.clientName,
+        isEdit: widget.isEditMode,
       );
-
-      await _calendarService.createMeeting(meeting);
-
-      // Add history entry for the lead if a lead is associated
-      // AND update the lead's meeting fields for dashboard sync
-      if (leadToUse != null && leadToUse.id.isNotEmpty) {
-        await _addMeetingHistoryToLead(leadToUse.id, meeting);
-        // Sync meeting date/time to lead for dashboard activity tracking
-        await _updateLeadMeetingInfo(leadToUse.id, meeting);
-      }
 
       if (mounted) {
         Navigator.of(context).pop();
         widget.onMeetingCreated?.call();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Meeting scheduled successfully'),
+            content: Text(widget.isEditMode ? 'Meeting updated successfully' : 'Meeting scheduled successfully'),
             backgroundColor: Colors.green.shade700,
           ),
         );
@@ -224,10 +402,11 @@ class _ScheduleMeetingDialogState extends State<ScheduleMeetingDialog> {
     }
   }
 
-  Future<void> _addMeetingHistoryToLead(String leadId, Meeting meeting) async {
+  Future<void> _addMeetingHistoryToLead(String leadId, Meeting meeting, {bool isEdit = false}) async {
     try {
       final dateStr = '${meeting.startTime.day}/${meeting.startTime.month}/${meeting.startTime.year}';
       final timeStr = '${meeting.startTime.hour.toString().padLeft(2, '0')}:${meeting.startTime.minute.toString().padLeft(2, '0')}';
+      final action = isEdit ? 'updated' : 'scheduled';
 
       await FirebaseFirestore.instance
           .collection('leads')
@@ -237,9 +416,9 @@ class _ScheduleMeetingDialogState extends State<ScheduleMeetingDialog> {
         'lead_id': leadId,
         'updated_by': widget.currentUser.email,
         'updated_at': FieldValue.serverTimestamp(),
-        'comment': 'Meeting scheduled: ${meeting.title}',
+        'comment': 'Meeting $action: ${meeting.title}',
         'changed_fields': {
-          'meeting_scheduled': {
+          'meeting_$action': {
             'old': '',
             'new': '${meeting.type.label} on $dateStr at $timeStr',
           },
@@ -272,6 +451,90 @@ class _ScheduleMeetingDialogState extends State<ScheduleMeetingDialog> {
     }
   }
 
+  /// Send meeting notification emails to host and all guests
+  Future<void> _sendMeetingNotificationEmails({
+    required String title,
+    required String description,
+    required DateTime startTime,
+    required DateTime endTime,
+    required MeetingType type,
+    required List<MeetingGuest> guests,
+    String? leadName,
+    bool isEdit = false,
+  }) async {
+    try {
+      final dateStr = '${startTime.day}/${startTime.month}/${startTime.year}';
+      final startTimeStr = '${startTime.hour.toString().padLeft(2, '0')}:${startTime.minute.toString().padLeft(2, '0')}';
+      final endTimeStr = '${endTime.hour.toString().padLeft(2, '0')}:${endTime.minute.toString().padLeft(2, '0')}';
+      final action = isEdit ? 'Updated' : 'New';
+      final subject = '$action Meeting: $title - $dateStr at $startTimeStr';
+
+      final body = '''
+$action Meeting Invitation
+
+Title: $title
+${description.isNotEmpty ? 'Agenda: $description\n' : ''}Date: $dateStr
+Time: $startTimeStr - $endTimeStr
+Type: ${type.label}
+${leadName != null ? 'Client: $leadName\n' : ''}Organized by: ${widget.currentUser.name} (${widget.currentUser.email})
+
+Guests: ${guests.map((g) => g.name ?? g.email).join(', ')}
+
+---
+This is an automated notification from Lead Management System.
+''';
+
+      // Queue email notification for the host (organizer)
+      await FirebaseFirestore.instance.collection('email_queue').add({
+        'to_email': widget.currentUser.email,
+        'to_name': widget.currentUser.name,
+        'subject': subject,
+        'body': body,
+        'type': 'meeting_notification',
+        'created_at': FieldValue.serverTimestamp(),
+        'status': 'pending',
+      });
+
+      // Log the host notification email
+      await FirebaseFirestore.instance.collection('email_logs').add({
+        'to_email': widget.currentUser.email,
+        'subject': subject,
+        'template_name': 'Meeting Notification',
+        'sent_by_user_id': widget.currentUser.uid,
+        'sent_by_user_name': widget.currentUser.name,
+        'sent_at': FieldValue.serverTimestamp(),
+        'status': 'logged',
+      });
+
+      // Queue email notification for each guest
+      for (final guest in guests) {
+        await FirebaseFirestore.instance.collection('email_queue').add({
+          'to_email': guest.email,
+          'to_name': guest.name ?? guest.email,
+          'subject': subject,
+          'body': body,
+          'type': 'meeting_notification',
+          'created_at': FieldValue.serverTimestamp(),
+          'status': 'pending',
+        });
+
+        await FirebaseFirestore.instance.collection('email_logs').add({
+          'to_email': guest.email,
+          'subject': subject,
+          'template_name': 'Meeting Notification',
+          'sent_by_user_id': widget.currentUser.uid,
+          'sent_by_user_name': widget.currentUser.name,
+          'sent_at': FieldValue.serverTimestamp(),
+          'status': 'logged',
+        });
+      }
+
+      debugPrint('Meeting notification emails queued for host + ${guests.length} guests');
+    } catch (e) {
+      debugPrint('Error sending meeting notification emails: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -295,11 +558,11 @@ class _ScheduleMeetingDialogState extends State<ScheduleMeetingDialog> {
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.event, color: theme.colorScheme.onPrimaryContainer),
+                    Icon(widget.isEditMode ? Icons.edit : Icons.event, color: theme.colorScheme.onPrimaryContainer),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Schedule Meeting',
+                        widget.isEditMode ? 'Edit Meeting' : 'Schedule Meeting',
                         style: theme.textTheme.titleMedium?.copyWith(
                           color: theme.colorScheme.onPrimaryContainer,
                           fontWeight: FontWeight.bold,
@@ -448,6 +711,17 @@ class _ScheduleMeetingDialogState extends State<ScheduleMeetingDialog> {
                       ),
                       const SizedBox(height: 16),
 
+                      // Meeting Link
+                      TextFormField(
+                        controller: _meetingLinkController,
+                        decoration: const InputDecoration(
+                          labelText: 'Meeting Link',
+                          prefixIcon: Icon(Icons.link),
+                          hintText: 'Paste Google Meet / Zoom link...',
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
                       // Guests
                       Text('Guests', style: theme.textTheme.titleSmall),
                       const SizedBox(height: 8),
@@ -512,7 +786,7 @@ class _ScheduleMeetingDialogState extends State<ScheduleMeetingDialog> {
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.check),
-                      label: const Text('Schedule'),
+                      label: Text(widget.isEditMode ? 'Update' : 'Schedule'),
                     ),
                   ],
                 ),

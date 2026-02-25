@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/user.dart';
 
@@ -16,8 +18,31 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordController = TextEditingController(text: 'demo123');
   String _selectedRole = 'Admin';
   bool _obscurePassword = true;
+  String? _appName;
+  String? _logoBase64;
 
   final List<String> _roles = ['Admin', 'Sales Manager', 'Sales Rep'];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBranding();
+  }
+
+  Future<void> _loadBranding() async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('settings')
+          .doc('branding')
+          .get();
+      if (doc.exists && mounted) {
+        setState(() {
+          _appName = doc.data()?['app_name'] as String?;
+          _logoBase64 = doc.data()?['logo_base64'] as String?;
+        });
+      }
+    } catch (_) {}
+  }
 
   UserRole _mapRole(String role) {
     switch (role) {
@@ -86,25 +111,35 @@ class _LoginScreenState extends State<LoginScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // -- Business Icon --
-                      Container(
-                        width: 72,
-                        height: 72,
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.primaryContainer,
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          Icons.leaderboard_rounded,
-                          size: 38,
-                          color: theme.colorScheme.onPrimaryContainer,
-                        ),
-                      ),
+                      // -- Business Icon / Logo --
+                      _logoBase64 != null
+                          ? ClipRRect(
+                              borderRadius: BorderRadius.circular(36),
+                              child: Image.memory(
+                                base64Decode(_logoBase64!),
+                                width: 72,
+                                height: 72,
+                                fit: BoxFit.cover,
+                              ),
+                            )
+                          : Container(
+                              width: 72,
+                              height: 72,
+                              decoration: BoxDecoration(
+                                color: theme.colorScheme.primaryContainer,
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                Icons.leaderboard_rounded,
+                                size: 38,
+                                color: theme.colorScheme.onPrimaryContainer,
+                              ),
+                            ),
                       const SizedBox(height: 20),
 
                       // -- Title --
                       Text(
-                        'Lead Management System',
+                        _appName?.isNotEmpty == true ? _appName! : 'Lead Management System',
                         style: theme.textTheme.headlineSmall?.copyWith(
                           fontWeight: FontWeight.bold,
                           color: theme.colorScheme.onSurface,

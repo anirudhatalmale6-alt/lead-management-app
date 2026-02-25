@@ -1,10 +1,14 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:image_picker/image_picker.dart';
 import '../models/email_template.dart';
 import '../models/user.dart';
 import '../models/lead.dart';
 import '../services/email_service.dart';
 import '../services/auth_service.dart';
+import '../services/google_calendar_service.dart';
 import '../utils/seed_demo_data.dart';
 
 class EmailSettingsScreen extends StatefulWidget {
@@ -34,7 +38,7 @@ class _EmailSettingsScreenState extends State<EmailSettingsScreen>
     setState(() {
       _isSuperAdmin = isSuperAdmin;
       _tabController = TabController(
-        length: isSuperAdmin ? 5 : 4,
+        length: isSuperAdmin ? 6 : 5,
         vsync: this,
       );
       _loading = false;
@@ -51,19 +55,20 @@ class _EmailSettingsScreenState extends State<EmailSettingsScreen>
   Widget build(BuildContext context) {
     if (_loading) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Email Settings')),
+        appBar: AppBar(title: const Text('Settings')),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Email Settings'),
+        title: const Text('Settings'),
         bottom: TabBar(
           controller: _tabController,
           isScrollable: true,
           tabs: [
             const Tab(text: 'SMTP', icon: Icon(Icons.settings)),
+            const Tab(text: 'Google Calendar', icon: Icon(Icons.calendar_month)),
             const Tab(text: 'Categories', icon: Icon(Icons.category)),
             const Tab(text: 'Templates', icon: Icon(Icons.email)),
             const Tab(text: 'Demo Data', icon: Icon(Icons.science)),
@@ -76,6 +81,7 @@ class _EmailSettingsScreenState extends State<EmailSettingsScreen>
         controller: _tabController,
         children: [
           _SmtpConfigTab(emailService: _emailService),
+          const _GoogleCalendarTab(),
           _CategoriesTab(emailService: _emailService),
           _TemplatesTab(emailService: _emailService),
           const _DemoDataTab(),
@@ -111,6 +117,11 @@ class _SmtpConfigTabState extends State<_SmtpConfigTab> {
   bool _loading = true;
   bool _saving = false;
   bool _obscurePassword = true;
+  bool _testing = false;
+  String? _testResult;
+  bool? _testSuccess;
+  bool _processingQueue = false;
+  String? _queueResult;
 
   @override
   void initState() {
@@ -162,6 +173,66 @@ class _SmtpConfigTabState extends State<_SmtpConfigTab> {
       }
     } finally {
       setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _testConnection() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() {
+      _testing = true;
+      _testResult = null;
+      _testSuccess = null;
+    });
+
+    try {
+      final config = SmtpConfig(
+        host: _hostController.text.trim(),
+        port: int.tryParse(_portController.text) ?? 587,
+        username: _usernameController.text.trim(),
+        password: _passwordController.text,
+        fromEmail: _fromEmailController.text.trim(),
+        fromName: _fromNameController.text.trim(),
+        useTls: _useTls,
+        useSsl: _useSsl,
+      );
+
+      final result = await widget.emailService.testSmtpConnection(config);
+      if (mounted) {
+        setState(() {
+          _testResult = result;
+          _testSuccess = result.startsWith('Success');
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _testResult = 'Error: $e';
+          _testSuccess = false;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _testing = false);
+    }
+  }
+
+  Future<void> _processQueue() async {
+    setState(() {
+      _processingQueue = true;
+      _queueResult = null;
+    });
+
+    try {
+      final result = await widget.emailService.processPendingEmails();
+      if (mounted) {
+        setState(() => _queueResult = result);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _queueResult = 'Error processing queue: $e');
+      }
+    } finally {
+      if (mounted) setState(() => _processingQueue = false);
     }
   }
 
@@ -277,18 +348,408 @@ class _SmtpConfigTabState extends State<_SmtpConfigTab> {
               ],
             ),
             const SizedBox(height: 24),
-            SizedBox(
+            // Action buttons row
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                FilledButton.icon(
+                  onPressed: _saving ? null : _saveConfig,
+                  icon: _saving
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.save),
+                  label: Text(_saving ? 'Saving...' : 'Save Settings'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _testing ? null : _testConnection,
+                  icon: _testing
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.send),
+                  label: Text(_testing ? 'Testing...' : 'Test Connection'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.orange.shade700,
+                    side: BorderSide(color: Colors.orange.shade300),
+                  ),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _processingQueue ? null : _processQueue,
+                  icon: _processingQueue
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.queue),
+                  label: Text(_processingQueue ? 'Processing...' : 'Process Email Queue'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.teal.shade700,
+                    side: BorderSide(color: Colors.teal.shade300),
+                  ),
+                ),
+              ],
+            ),
+            // Test Connection result
+            if (_testResult != null) ...[
+              const SizedBox(height: 16),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: _testSuccess == true
+                      ? Colors.green.shade50
+                      : Colors.red.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: _testSuccess == true
+                        ? Colors.green.shade300
+                        : Colors.red.shade300,
+                  ),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      _testSuccess == true ? Icons.check_circle : Icons.error,
+                      color: _testSuccess == true ? Colors.green : Colors.red,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _testResult!,
+                        style: TextStyle(
+                          color: _testSuccess == true
+                              ? Colors.green.shade800
+                              : Colors.red.shade800,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            // Queue processing result
+            if (_queueResult != null) ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.blue.shade300),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, color: Colors.blue.shade700, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _queueResult!,
+                        style: TextStyle(color: Colors.blue.shade800, fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 24),
+            // Help text
+            Container(
               width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: _saving ? null : _saveConfig,
-                icon: _saving
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.save),
-                label: Text(_saving ? 'Saving...' : 'Save SMTP Settings'),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('How it works:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  const SizedBox(height: 6),
+                  Text('1. Save your SMTP settings (e.g., Gmail App Password)', style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+                  Text('2. Click "Test Connection" to send a test email to yourself', style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+                  Text('3. Emails will be sent automatically when you use email features', style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+                  Text('4. "Process Queue" sends any pending emails that failed earlier', style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+                  const SizedBox(height: 8),
+                  Text('For Gmail: Use App Password (Google Account > Security > App Passwords)', style: TextStyle(fontSize: 11, color: Colors.orange.shade700, fontWeight: FontWeight.w500)),
+                  const SizedBox(height: 6),
+                  Text('Web: Requires Firebase Cloud Functions deployed (firebase deploy --only functions)', style: TextStyle(fontSize: 11, color: Colors.blue.shade700, fontWeight: FontWeight.w500)),
+                  Text('Mobile: Sends emails directly via SMTP (no Cloud Functions needed)', style: TextStyle(fontSize: 11, color: Colors.blue.shade700, fontWeight: FontWeight.w500)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// Google Calendar Tab
+// ============================================================================
+
+class _GoogleCalendarTab extends StatefulWidget {
+  const _GoogleCalendarTab();
+
+  @override
+  State<_GoogleCalendarTab> createState() => _GoogleCalendarTabState();
+}
+
+class _GoogleCalendarTabState extends State<_GoogleCalendarTab> {
+  final _formKey = GlobalKey<FormState>();
+  final GoogleCalendarService _gcService = GoogleCalendarService();
+  final _clientIdController = TextEditingController();
+  final _clientSecretController = TextEditingController();
+  final _refreshTokenController = TextEditingController();
+  final _apiKeyController = TextEditingController();
+  bool _loading = true;
+  bool _saving = false;
+  bool _testing = false;
+  String? _testResult;
+  bool? _testSuccess;
+  bool _obscureSecret = true;
+  bool _obscureToken = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadConfig();
+  }
+
+  Future<void> _loadConfig() async {
+    final config = await _gcService.getConfig();
+    if (config != null) {
+      _clientIdController.text = config.clientId;
+      _clientSecretController.text = config.clientSecret;
+      _refreshTokenController.text = config.refreshToken;
+      _apiKeyController.text = config.apiKey;
+    }
+    setState(() => _loading = false);
+  }
+
+  Future<void> _saveConfig() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() => _saving = true);
+    try {
+      final config = GoogleCalendarConfig(
+        clientId: _clientIdController.text.trim(),
+        clientSecret: _clientSecretController.text.trim(),
+        refreshToken: _refreshTokenController.text.trim(),
+        apiKey: _apiKeyController.text.trim(),
+      );
+      await _gcService.saveConfig(config);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Google Calendar settings saved!')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    } finally {
+      setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _testConnection() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() {
+      _testing = true;
+      _testResult = null;
+      _testSuccess = null;
+    });
+
+    try {
+      final config = GoogleCalendarConfig(
+        clientId: _clientIdController.text.trim(),
+        clientSecret: _clientSecretController.text.trim(),
+        refreshToken: _refreshTokenController.text.trim(),
+        apiKey: _apiKeyController.text.trim(),
+      );
+
+      final result = await _gcService.testConnection(config);
+      if (mounted) {
+        setState(() {
+          _testResult = result;
+          _testSuccess = result.startsWith('Success');
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _testResult = 'Error: $e';
+          _testSuccess = false;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _testing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Form(
+        key: _formKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Google Calendar Integration',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Connect Google Calendar to auto-create Google Meet links for meetings.',
+              style: TextStyle(color: Colors.grey),
+            ),
+            const SizedBox(height: 24),
+            TextFormField(
+              controller: _clientIdController,
+              decoration: const InputDecoration(
+                labelText: 'Client ID',
+                prefixIcon: Icon(Icons.key),
+                hintText: 'Google OAuth Client ID',
+              ),
+              validator: (v) => v?.isEmpty == true ? 'Required' : null,
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _clientSecretController,
+              decoration: InputDecoration(
+                labelText: 'Client Secret',
+                prefixIcon: const Icon(Icons.lock),
+                suffixIcon: IconButton(
+                  icon: Icon(_obscureSecret ? Icons.visibility : Icons.visibility_off),
+                  onPressed: () => setState(() => _obscureSecret = !_obscureSecret),
+                ),
+              ),
+              obscureText: _obscureSecret,
+              validator: (v) => v?.isEmpty == true ? 'Required' : null,
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _refreshTokenController,
+              decoration: InputDecoration(
+                labelText: 'Refresh Token',
+                prefixIcon: const Icon(Icons.refresh),
+                suffixIcon: IconButton(
+                  icon: Icon(_obscureToken ? Icons.visibility : Icons.visibility_off),
+                  onPressed: () => setState(() => _obscureToken = !_obscureToken),
+                ),
+              ),
+              obscureText: _obscureToken,
+              validator: (v) => v?.isEmpty == true ? 'Required' : null,
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _apiKeyController,
+              decoration: const InputDecoration(
+                labelText: 'API Key (optional)',
+                prefixIcon: Icon(Icons.vpn_key),
+              ),
+            ),
+            const SizedBox(height: 24),
+            // Action buttons
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                FilledButton.icon(
+                  onPressed: _saving ? null : _saveConfig,
+                  icon: _saving
+                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.save),
+                  label: Text(_saving ? 'Saving...' : 'Save Settings'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _testing ? null : _testConnection,
+                  icon: _testing
+                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.check_circle),
+                  label: Text(_testing ? 'Testing...' : 'Test Connection'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.green.shade700,
+                    side: BorderSide(color: Colors.green.shade300),
+                  ),
+                ),
+              ],
+            ),
+            // Test result
+            if (_testResult != null) ...[
+              const SizedBox(height: 16),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: _testSuccess == true ? Colors.green.shade50 : Colors.red.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: _testSuccess == true ? Colors.green.shade300 : Colors.red.shade300,
+                  ),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      _testSuccess == true ? Icons.check_circle : Icons.error,
+                      color: _testSuccess == true ? Colors.green : Colors.red,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _testResult!,
+                        style: TextStyle(
+                          color: _testSuccess == true ? Colors.green.shade800 : Colors.red.shade800,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 24),
+            // Info card
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.blue.shade50,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('How it works:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  const SizedBox(height: 6),
+                  Text('1. Save your Google Calendar credentials', style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+                  Text('2. When scheduling a meeting, a Google Meet link is auto-created', style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+                  Text('3. The meeting is added to Google Calendar with the Meet link', style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+                  Text('4. You can still enter a manual link to skip auto-creation', style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+                ],
               ),
             ),
           ],
@@ -1709,5 +2170,253 @@ class _LeadManagerTabState extends State<_LeadManagerTab> {
       case LeadHealth.junk:
         return Colors.brown;
     }
+  }
+}
+
+// ============================================================================
+// Branding Tab (Super Admin Only)
+// ============================================================================
+
+class _BrandingTab extends StatefulWidget {
+  const _BrandingTab();
+
+  @override
+  State<_BrandingTab> createState() => _BrandingTabState();
+}
+
+class _BrandingTabState extends State<_BrandingTab> {
+  final _firestore = FirebaseFirestore.instance;
+  final _nameController = TextEditingController();
+  final _picker = ImagePicker();
+  bool _loading = true;
+  bool _saving = false;
+  String? _logoBase64;
+  String? _currentLogoBase64;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBranding();
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadBranding() async {
+    try {
+      final doc = await _firestore.collection('settings').doc('branding').get();
+      if (doc.exists) {
+        final data = doc.data()!;
+        _nameController.text = data['app_name'] ?? '';
+        _currentLogoBase64 = data['logo_base64'] as String?;
+        _logoBase64 = _currentLogoBase64;
+      }
+    } catch (e) {
+      debugPrint('Branding: Load error: $e');
+    }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _pickLogo() async {
+    try {
+      final picked = await _picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 512,
+        maxHeight: 512,
+        imageQuality: 80,
+      );
+      if (picked == null) return;
+
+      final bytes = await picked.readAsBytes();
+      if (bytes.length > 500000) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Image too large. Please use an image under 500KB.')),
+          );
+        }
+        return;
+      }
+
+      setState(() {
+        _logoBase64 = base64Encode(bytes);
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error picking image: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _saveBranding() async {
+    setState(() => _saving = true);
+    try {
+      final data = <String, dynamic>{
+        'app_name': _nameController.text.trim(),
+        'updated_at': FieldValue.serverTimestamp(),
+      };
+      if (_logoBase64 != null) {
+        data['logo_base64'] = _logoBase64;
+      }
+      await _firestore.collection('settings').doc('branding').set(data, SetOptions(merge: true));
+      _currentLogoBase64 = _logoBase64;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Branding saved successfully!')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error saving: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  void _removeLogo() {
+    setState(() {
+      _logoBase64 = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final theme = Theme.of(context);
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'App Branding',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Customize the app logo and name. Changes will appear on the login screen and throughout the app.',
+            style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 24),
+
+          // Logo section
+          const Text('App Logo', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 12),
+          Center(
+            child: Column(
+              children: [
+                Container(
+                  width: 120,
+                  height: 120,
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: theme.colorScheme.outline.withOpacity(0.3)),
+                  ),
+                  child: _logoBase64 != null
+                      ? ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: Image.memory(
+                            base64Decode(_logoBase64!),
+                            fit: BoxFit.cover,
+                            width: 120,
+                            height: 120,
+                          ),
+                        )
+                      : Icon(
+                          Icons.image_outlined,
+                          size: 48,
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: _pickLogo,
+                      icon: const Icon(Icons.upload),
+                      label: Text(_logoBase64 != null ? 'Change Logo' : 'Upload Logo'),
+                    ),
+                    if (_logoBase64 != null) ...[
+                      const SizedBox(width: 8),
+                      TextButton.icon(
+                        onPressed: _removeLogo,
+                        icon: const Icon(Icons.delete_outline, color: Colors.red),
+                        label: const Text('Remove', style: TextStyle(color: Colors.red)),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Recommended: Square image, max 512x512px',
+                  style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // App name section
+          const Text('App Name', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _nameController,
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              hintText: 'e.g. Lead Management System',
+              labelText: 'App Name',
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // Save button
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _saving ? null : _saveBranding,
+              icon: _saving
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.save),
+              label: Text(_saving ? 'Saving...' : 'Save Branding'),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, color: theme.colorScheme.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'The logo and app name will be displayed on the login screen and app header. After saving, users may need to refresh the page to see changes.',
+                      style: TextStyle(fontSize: 13, color: theme.colorScheme.onSurfaceVariant),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

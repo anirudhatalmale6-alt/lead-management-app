@@ -6,6 +6,7 @@ import '../models/meeting.dart';
 import '../models/user.dart';
 import '../services/calendar_service.dart';
 import '../services/firestore_service.dart';
+import '../services/lead_service.dart';
 import '../services/user_service.dart';
 import '../theme/app_theme.dart';
 import 'lead_detail_screen.dart';
@@ -73,7 +74,82 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _loadMeetings() async {
     try {
-      final meetings = await CalendarService().getAllMeetings();
+      final calService = CalendarService();
+      final user = widget.currentUser;
+      List<Meeting> meetings;
+
+      if (user == null) {
+        meetings = [];
+      } else {
+        switch (user.role) {
+          case UserRole.superAdmin:
+          case UserRole.admin:
+            meetings = await calService.getAllMeetings();
+            break;
+          case UserRole.manager:
+          case UserRole.teamLead:
+            if (user.teamId != null && user.teamId!.isNotEmpty) {
+              meetings = await calService.getAllMeetings();
+              meetings = meetings.where((m) =>
+                m.teamId == user.teamId ||
+                m.organizerUid == user.uid ||
+                m.createdBy == user.email ||
+                m.guests.any((g) => g.email == user.email)
+              ).toList();
+            } else {
+              meetings = await calService.getMeetingsByUser(user.uid, user.email);
+            }
+            break;
+          case UserRole.coordinator:
+            if (user.groupId != null && user.groupId!.isNotEmpty) {
+              meetings = await calService.getAllMeetings();
+              meetings = meetings.where((m) =>
+                m.groupId == user.groupId ||
+                m.organizerUid == user.uid ||
+                m.createdBy == user.email ||
+                m.guests.any((g) => g.email == user.email)
+              ).toList();
+            } else {
+              meetings = await calService.getMeetingsByUser(user.uid, user.email);
+            }
+            break;
+          case UserRole.member:
+            meetings = await calService.getMeetingsByUser(user.uid, user.email);
+            break;
+        }
+      }
+
+      // Fallback: if no meetings from collection, try loading from lead documents
+      if (meetings.isEmpty) {
+        try {
+          final leadService = LeadService();
+          final allLeads = widget.leads.isNotEmpty ? widget.leads : await leadService.getAllLeads();
+          for (final lead in allLeads) {
+            if (lead.meetingDate == null) continue;
+            final timeParts = lead.meetingTime.split(':');
+            final hour = timeParts.isNotEmpty ? int.tryParse(timeParts[0]) ?? 0 : 0;
+            final minute = timeParts.length > 1 ? int.tryParse(timeParts[1]) ?? 0 : 0;
+            final startTime = DateTime(lead.meetingDate!.year, lead.meetingDate!.month, lead.meetingDate!.day, hour, minute);
+            meetings.add(Meeting(
+              id: 'lead_${lead.id}',
+              title: '${lead.meetingAgenda.label} - ${lead.clientName}',
+              description: lead.meetingAgenda.label,
+              startTime: startTime,
+              endTime: startTime.add(const Duration(minutes: 30)),
+              type: MeetingType.googleMeet,
+              status: startTime.isBefore(DateTime.now()) ? MeetingStatus.completed : MeetingStatus.scheduled,
+              leadId: lead.id,
+              leadName: lead.clientName,
+              organizerUid: lead.ownerUid,
+              createdBy: lead.createdBy,
+              createdAt: lead.createdAt,
+              teamId: lead.teamId,
+              groupId: lead.groupId,
+            ));
+          }
+        } catch (_) {}
+      }
+
       if (mounted) {
         setState(() {
           _allMeetings = meetings;
@@ -239,14 +315,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final picked = await showDatePicker(
       context: context,
       initialDate: isFrom ? (_filterDateFrom ?? now) : (_filterDateTo ?? now),
-      firstDate: DateTime(now.year - 5),
+      firstDate: isFrom ? DateTime(now.year - 5) : (_filterDateFrom ?? DateTime(now.year - 5)),
       lastDate: DateTime(now.year + 5),
     );
     if (picked != null) {
       setState(() {
         if (isFrom) {
           _filterDateFrom = picked;
+          if (_filterDateTo != null && _filterDateTo!.isBefore(picked)) {
+            _filterDateTo = null;
+          }
         } else {
+          if (_filterDateFrom != null && picked.isBefore(_filterDateFrom!)) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('End date cannot be before start date'), backgroundColor: Colors.orange),
+            );
+            return;
+          }
           _filterDateTo = picked;
         }
       });
@@ -460,6 +545,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
     ).toList()..sort((a, b) => a.meetingDate!.compareTo(b.meetingDate!));
   }
 
+  /// Leads with no follow-up date set at all (active leads missing follow-up)
+  List<Lead> get _noFollowUpLeads {
+    return leads.where((l) =>
+      l.nextFollowUpDate == null &&
+      l.stage != LeadStage.won && l.stage != LeadStage.lost
+    ).toList()..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  }
+
+  /// Leads with no meeting date set at all (active leads missing meeting)
+  List<Lead> get _noMeetingLeads {
+    return leads.where((l) =>
+      l.meetingDate == null &&
+      l.stage != LeadStage.won && l.stage != LeadStage.lost
+    ).toList()..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  }
+
   /// Format narration for a lead card item
   String _buildNarration(Lead lead, {DateTime? dateOverride}) {
     final parts = <String>[];
@@ -615,9 +716,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
           child: Column(
             children: [
-              // Hierarchy filter: Team > Group > User
-              _buildHierarchyFilter(),
-              const SizedBox(height: 8),
+              // Hierarchy filter: Team > Group > User (hidden for members)
+              if (widget.currentUser?.role != UserRole.member) ...[
+                _buildHierarchyFilter(),
+                const SizedBox(height: 8),
+              ],
               // Time period chips
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
@@ -751,93 +854,93 @@ class _DashboardScreenState extends State<DashboardScreen> {
       filteredUsers = filteredUsers.where((u) => u.groupId == _filterGroupId).toList();
     }
 
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          // Team dropdown
-          SizedBox(
-            width: 150,
-            child: DropdownButtonFormField<String>(
-              value: _filterTeamId,
-              isDense: true,
-              isExpanded: true,
-              decoration: InputDecoration(
-                labelText: 'Team',
-                labelStyle: const TextStyle(fontSize: 12),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)),
-              ),
-              items: [
-                const DropdownMenuItem<String>(value: null, child: Text('All Teams', style: TextStyle(fontSize: 12))),
-                ..._teams.map((t) => DropdownMenuItem<String>(
-                  value: t['id'] as String,
-                  child: Text(t['name'] as String? ?? '', style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
-                )),
-              ],
-              onChanged: (v) => setState(() {
-                _filterTeamId = v;
-                _filterGroupId = null;
-                _filterUserId = null;
-              }),
+    final screenWidth = MediaQuery.of(context).size.width;
+    final filterWidth = screenWidth < 600 ? (screenWidth - 56) / 3 : 160.0;
+
+    return Row(
+      children: [
+        // Team dropdown
+        Expanded(
+          child: DropdownButtonFormField<String>(
+            value: _filterTeamId,
+            isDense: true,
+            isExpanded: true,
+            decoration: InputDecoration(
+              labelText: 'Team',
+              floatingLabelBehavior: FloatingLabelBehavior.always,
+              labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)),
             ),
+            items: [
+              const DropdownMenuItem<String>(value: null, child: Text('All Teams', style: TextStyle(fontSize: 11))),
+              ..._teams.map((t) => DropdownMenuItem<String>(
+                value: t['id'] as String,
+                child: Text(t['name'] as String? ?? '', style: const TextStyle(fontSize: 11), overflow: TextOverflow.ellipsis),
+              )),
+            ],
+            onChanged: (v) => setState(() {
+              _filterTeamId = v;
+              _filterGroupId = null;
+              _filterUserId = null;
+            }),
           ),
-          const SizedBox(width: 8),
-          // Group dropdown
-          SizedBox(
-            width: 150,
-            child: DropdownButtonFormField<String>(
-              value: _filterGroupId,
-              isDense: true,
-              isExpanded: true,
-              decoration: InputDecoration(
-                labelText: 'Group',
-                labelStyle: const TextStyle(fontSize: 12),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)),
-              ),
-              items: [
-                const DropdownMenuItem<String>(value: null, child: Text('All Groups', style: TextStyle(fontSize: 12))),
-                ...filteredGroups.map((g) => DropdownMenuItem<String>(
-                  value: g['id'] as String,
-                  child: Text(g['name'] as String? ?? '', style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
-                )),
-              ],
-              onChanged: (v) => setState(() {
-                _filterGroupId = v;
-                _filterUserId = null;
-              }),
+        ),
+        const SizedBox(width: 6),
+        // Group dropdown
+        Expanded(
+          child: DropdownButtonFormField<String>(
+            value: _filterGroupId,
+            isDense: true,
+            isExpanded: true,
+            decoration: InputDecoration(
+              labelText: 'Group',
+              floatingLabelBehavior: FloatingLabelBehavior.always,
+              labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)),
             ),
+            items: [
+              const DropdownMenuItem<String>(value: null, child: Text('All Groups', style: TextStyle(fontSize: 11))),
+              ...filteredGroups.map((g) => DropdownMenuItem<String>(
+                value: g['id'] as String,
+                child: Text(g['name'] as String? ?? '', style: const TextStyle(fontSize: 11), overflow: TextOverflow.ellipsis),
+              )),
+            ],
+            onChanged: (v) => setState(() {
+              _filterGroupId = v;
+              _filterUserId = null;
+            }),
           ),
-          const SizedBox(width: 8),
-          // User dropdown
-          SizedBox(
-            width: 150,
-            child: DropdownButtonFormField<String>(
-              value: _filterUserId,
-              isDense: true,
-              isExpanded: true,
-              decoration: InputDecoration(
-                labelText: 'User',
-                labelStyle: const TextStyle(fontSize: 12),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)),
-              ),
-              items: [
-                const DropdownMenuItem<String>(value: null, child: Text('All Users', style: TextStyle(fontSize: 12))),
-                ...filteredUsers.map((u) => DropdownMenuItem<String>(
-                  value: u.uid,
-                  child: Text(u.name.isNotEmpty ? u.name : u.email, style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
-                )),
-              ],
-              onChanged: (v) => setState(() => _filterUserId = v),
+        ),
+        const SizedBox(width: 6),
+        // User dropdown
+        Expanded(
+          child: DropdownButtonFormField<String>(
+            value: _filterUserId,
+            isDense: true,
+            isExpanded: true,
+            decoration: InputDecoration(
+              labelText: 'User',
+              floatingLabelBehavior: FloatingLabelBehavior.always,
+              labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)),
             ),
+            items: [
+              const DropdownMenuItem<String>(value: null, child: Text('All Users', style: TextStyle(fontSize: 11))),
+              ...filteredUsers.map((u) => DropdownMenuItem<String>(
+                value: u.uid,
+                child: Text(u.name.isNotEmpty ? u.name : u.email, style: const TextStyle(fontSize: 11), overflow: TextOverflow.ellipsis),
+              )),
+            ],
+            onChanged: (v) => setState(() => _filterUserId = v),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -1316,6 +1419,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   )),
                 ],
               ),
+              const SizedBox(height: 12),
+              // Row 4: No Follow-up | No Meeting
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: _buildAgendaCard(
+                    title: 'Missing Follow-up',
+                    items: _noFollowUpLeads,
+                    color: Colors.deepOrange,
+                    icon: Icons.phone_disabled,
+                    dateGetter: (l) => l.createdAt,
+                    isMissed: true,
+                  )),
+                  const SizedBox(width: 12),
+                  Expanded(child: _buildAgendaCard(
+                    title: 'Missing Meeting',
+                    items: _noMeetingLeads,
+                    color: Colors.brown,
+                    icon: Icons.event_available,
+                    dateGetter: (l) => l.createdAt,
+                    isMissed: true,
+                  )),
+                ],
+              ),
             ],
           );
         } else {
@@ -1333,6 +1460,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
               _buildAgendaCard(title: 'Missed Followup', items: _missedFollowups, color: Colors.red, icon: Icons.phone_missed, dateGetter: (l) => l.nextFollowUpDate, isMissed: true),
               const SizedBox(height: 12),
               _buildAgendaCard(title: 'Missed Meeting', items: _missedMeetingsLeads, color: Colors.red.shade700, icon: Icons.event_busy, dateGetter: (l) => l.meetingDate, isMissed: true),
+              const SizedBox(height: 12),
+              _buildAgendaCard(title: 'Missing Follow-up', items: _noFollowUpLeads, color: Colors.deepOrange, icon: Icons.phone_disabled, dateGetter: (l) => l.createdAt, isMissed: true),
+              const SizedBox(height: 12),
+              _buildAgendaCard(title: 'Missing Meeting', items: _noMeetingLeads, color: Colors.brown, icon: Icons.event_available, dateGetter: (l) => l.createdAt, isMissed: true),
             ],
           );
         }

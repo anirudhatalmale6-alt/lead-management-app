@@ -70,7 +70,7 @@ class CalendarService {
     }
   }
 
-  // Get meetings by user (organizer, assigned, or guest)
+  // Get meetings by user (organizer, assigned, created_by, or guest)
   Future<List<Meeting>> getMeetingsByUser(String uid, String email) async {
     try {
       // Get meetings where user is organizer
@@ -81,6 +81,11 @@ class CalendarService {
       // Get meetings where user is assigned
       final assignedSnapshot = await _meetingsRef
           .where('assigned_to', isEqualTo: uid)
+          .get();
+
+      // Get meetings where user is the creator (created_by email)
+      final createdBySnapshot = await _meetingsRef
+          .where('created_by', isEqualTo: email)
           .get();
 
       // Combine and deduplicate
@@ -101,8 +106,15 @@ class CalendarService {
         }
       }
 
+      for (final doc in createdBySnapshot.docs) {
+        if (!seenIds.contains(doc.id)) {
+          seenIds.add(doc.id);
+          meetings.add(Meeting.fromFirestore(doc));
+        }
+      }
+
       meetings.sort((a, b) => a.startTime.compareTo(b.startTime));
-      debugPrint('CalendarService: Loaded ${meetings.length} meetings for user $uid');
+      debugPrint('CalendarService: Loaded ${meetings.length} meetings for user $uid ($email)');
       return meetings;
     } catch (e) {
       debugPrint('CalendarService: Error loading user meetings: $e');

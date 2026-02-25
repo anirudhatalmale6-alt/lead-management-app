@@ -89,20 +89,15 @@ class _AppShellState extends State<AppShell> {
       selectedIcon: Icon(Icons.admin_panel_settings),
       label: 'Admin',
     ));
-    // Email & Calendar Settings only visible to Admin/SuperAdmin
+    // Settings only visible to Admin/SuperAdmin
     if (widget.isAdmin) {
-      items.addAll([
+      items.add(
         const NavigationDestination(
-          icon: Icon(Icons.email_outlined),
-          selectedIcon: Icon(Icons.email),
-          label: 'Email',
+          icon: Icon(Icons.settings_outlined),
+          selectedIcon: Icon(Icons.settings),
+          label: 'Settings',
         ),
-        const NavigationDestination(
-          icon: Icon(Icons.event_note_outlined),
-          selectedIcon: Icon(Icons.event_note),
-          label: 'Cal Setup',
-        ),
-      ]);
+      );
     }
     return items;
   }
@@ -194,20 +189,15 @@ class _AppShellState extends State<AppShell> {
       selectedIcon: Icon(Icons.admin_panel_settings),
       label: Text('Admin'),
     ));
-    // Email & Calendar Settings only visible to Admin/SuperAdmin
+    // Settings only visible to Admin/SuperAdmin
     if (widget.isAdmin) {
-      items.addAll([
+      items.add(
         const NavigationRailDestination(
-          icon: Icon(Icons.email_outlined),
-          selectedIcon: Icon(Icons.email),
-          label: Text('Email'),
+          icon: Icon(Icons.settings_outlined),
+          selectedIcon: Icon(Icons.settings),
+          label: Text('Settings'),
         ),
-        const NavigationRailDestination(
-          icon: Icon(Icons.event_note_outlined),
-          selectedIcon: Icon(Icons.event_note),
-          label: Text('Cal Setup'),
-        ),
-      ]);
+      );
     }
     return items;
   }
@@ -327,7 +317,7 @@ class _AppShellState extends State<AppShell> {
                   ),
                 ),
                 const VerticalDivider(thickness: 1, width: 1),
-                Expanded(child: widget.screens[_selectedIndex]),
+                Expanded(child: IndexedStack(index: _selectedIndex, children: widget.screens)),
               ],
             ),
           );
@@ -365,15 +355,65 @@ class _AppShellState extends State<AppShell> {
                           ),
                     ),
                     const SizedBox(width: 8),
-                    CircleAvatar(
-                      radius: 16,
-                      backgroundColor: cs.primaryContainer,
-                      child: Text(
-                        widget.user.name[0].toUpperCase(),
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: cs.onPrimaryContainer,
+                    GestureDetector(
+                      onTap: () {
+                        showDialog(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: Row(
+                              children: [
+                                CircleAvatar(
+                                  radius: 24,
+                                  backgroundColor: cs.primaryContainer,
+                                  child: Text(
+                                    widget.user.name[0].toUpperCase(),
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: cs.onPrimaryContainer,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(widget.user.name, style: const TextStyle(fontSize: 16)),
+                                      Text(widget.user.role.label,
+                                          style: TextStyle(fontSize: 12, color: cs.outline)),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            content: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (widget.user.email.isNotEmpty)
+                                  Text('Email: ${widget.user.email}', style: const TextStyle(fontSize: 13)),
+                              ],
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(ctx),
+                                child: const Text('Close'),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                      child: CircleAvatar(
+                        radius: 16,
+                        backgroundColor: cs.primaryContainer,
+                        child: Text(
+                          widget.user.name[0].toUpperCase(),
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: cs.onPrimaryContainer,
+                          ),
                         ),
                       ),
                     ),
@@ -387,7 +427,7 @@ class _AppShellState extends State<AppShell> {
               ),
             ],
           ),
-          body: widget.screens[_selectedIndex],
+          body: IndexedStack(index: _selectedIndex, children: widget.screens),
           bottomNavigationBar: useScrollableNav
               ? _buildScrollableBottomNav(cs)
               : NavigationBar(

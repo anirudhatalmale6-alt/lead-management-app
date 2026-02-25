@@ -83,6 +83,14 @@ class _AdminScreenState extends State<AdminScreen>
   String _debugUserLoadStatus = 'not started';
   String _debugGroupLoadStatus = 'not started';
 
+  // Search controllers for Team, Group, User tabs
+  final TextEditingController _teamSearchController = TextEditingController();
+  final TextEditingController _groupSearchController = TextEditingController();
+  final TextEditingController _userSearchController = TextEditingController();
+  String _teamSearchQuery = '';
+  String _groupSearchQuery = '';
+  String _userSearchQuery = '';
+
   // Manage Leads tab state
   final LeadService _leadService = LeadService();
   List<Lead> _allLeads = [];
@@ -288,6 +296,9 @@ class _AdminScreenState extends State<AdminScreen>
   void dispose() {
     _tabController.dispose();
     _leadSearchController.dispose();
+    _teamSearchController.dispose();
+    _groupSearchController.dispose();
+    _userSearchController.dispose();
     super.dispose();
   }
 
@@ -348,20 +359,46 @@ class _AdminScreenState extends State<AdminScreen>
           children: [
             Padding(
               padding: const EdgeInsets.all(16),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Team List', style: Theme.of(context).textTheme.titleLarge),
-                  if (!_canModify) ...[
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.orange.shade100,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text('View Only', style: TextStyle(fontSize: 11, color: Colors.orange.shade800, fontWeight: FontWeight.w600)),
+                  Row(
+                    children: [
+                      Text('Team List', style: Theme.of(context).textTheme.titleLarge),
+                      if (!_canModify) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.shade100,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text('View Only', style: TextStyle(fontSize: 11, color: Colors.orange.shade800, fontWeight: FontWeight.w600)),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _teamSearchController,
+                    decoration: InputDecoration(
+                      hintText: 'Search teams...',
+                      prefixIcon: const Icon(Icons.search, size: 20),
+                      suffixIcon: _teamSearchQuery.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear, size: 18),
+                              onPressed: () {
+                                _teamSearchController.clear();
+                                setState(() => _teamSearchQuery = '');
+                              },
+                            )
+                          : null,
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                     ),
-                  ],
+                    onChanged: (v) => setState(() => _teamSearchQuery = v.toLowerCase()),
+                  ),
                 ],
               ),
             ),
@@ -508,8 +545,24 @@ class _AdminScreenState extends State<AdminScreen>
       builder: (context, snapshot) {
         if (snapshot.hasError) return Center(child: Text('Error: ${snapshot.error}'));
         if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-        final docs = snapshot.data?.docs ?? [];
+        var docs = snapshot.data?.docs ?? [];
         if (docs.isEmpty) return const Center(child: Text('No teams found.'));
+
+        // Apply search filter
+        if (_teamSearchQuery.isNotEmpty) {
+          docs = docs.where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            final name = (data['name'] ?? '').toString().toLowerCase();
+            final admin = (data['admin_name'] ?? '').toString().toLowerCase();
+            final manager = (data['manager_name'] ?? '').toString().toLowerCase();
+            final tl = (data['tl_name'] ?? '').toString().toLowerCase();
+            return name.contains(_teamSearchQuery) ||
+                admin.contains(_teamSearchQuery) ||
+                manager.contains(_teamSearchQuery) ||
+                tl.contains(_teamSearchQuery);
+          }).toList();
+          if (docs.isEmpty) return const Center(child: Text('No teams match your search.'));
+        }
 
         return SingleChildScrollView(
           scrollDirection: Axis.horizontal,
@@ -821,18 +874,8 @@ class _AdminScreenState extends State<AdminScreen>
       children: [
         Column(
           children: [
-            // DEBUG BANNER - remove after fixing
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(8),
-              color: Colors.blue.shade100,
-              child: Text(
-                'DEBUG: groups=${_mockGroups.length} | status=$_debugGroupLoadStatus',
-                style: const TextStyle(fontSize: 11, color: Colors.black87),
-              ),
-            ),
             Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
               child: Row(
                 children: [
                   Text('Group List', style: Theme.of(context).textTheme.titleLarge),
@@ -847,7 +890,44 @@ class _AdminScreenState extends State<AdminScreen>
                       child: Text('View Only', style: TextStyle(fontSize: 11, color: Colors.orange.shade800, fontWeight: FontWeight.w600)),
                     ),
                   ],
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.green.shade200),
+                    ),
+                    child: Text('v73', style: TextStyle(fontSize: 9, color: Colors.green.shade700)),
+                  ),
                 ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+              child: Text('${_mockGroups.length} groups loaded', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: TextField(
+                controller: _groupSearchController,
+                decoration: InputDecoration(
+                  hintText: 'Search groups...',
+                  prefixIcon: const Icon(Icons.search, size: 20),
+                  suffixIcon: _groupSearchQuery.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, size: 18),
+                          onPressed: () {
+                            _groupSearchController.clear();
+                            setState(() => _groupSearchQuery = '');
+                          },
+                        )
+                      : null,
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                onChanged: (v) => setState(() => _groupSearchQuery = v.toLowerCase()),
               ),
             ),
             Expanded(
@@ -883,92 +963,126 @@ class _AdminScreenState extends State<AdminScreen>
         ),
       );
     }
-    // Use ListView instead of DataTable to avoid rendering issues
-    return ListView.builder(
-      padding: const EdgeInsets.only(bottom: 80),
-      itemCount: _mockGroups.length,
-      itemBuilder: (context, index) {
-        final grp = _mockGroups[index];
-        final groupId = grp['id']?.toString();
-        final groupMembers = _getGroupMemberNames(groupId);
-        List<String> explicitNames = [];
-        try {
-          if (grp['member_names'] != null && grp['member_names'] is List) {
-            explicitNames = (grp['member_names'] as List).map((e) => e.toString()).toList();
-          } else if (grp['members'] != null && grp['members'] is List) {
-            explicitNames = (grp['members'] as List).map((uid) => _getUserNameByUid(uid.toString()) ?? uid.toString()).toList();
-          }
-        } catch (_) {}
-        final allNames = {...groupMembers, ...explicitNames}.toList();
-        final memberCount = allNames.length;
 
-        return Card(
-          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-          child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: Colors.indigo,
-              child: Text(
-                '${index + 1}',
-                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-              ),
-            ),
-            title: Text('${grp['name'] ?? ''}', style: const TextStyle(fontWeight: FontWeight.w600)),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Team: ${grp['team_name'] ?? 'N/A'}', style: const TextStyle(fontSize: 12)),
-                Row(
-                  children: [
-                    Text('Mgr: ${grp['manager_name'] ?? 'N/A'}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                    const SizedBox(width: 8),
-                    Text('TL: ${grp['tl_name'] ?? 'N/A'}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                  ],
+    // Apply group search filter
+    final filteredGroups = _groupSearchQuery.isEmpty
+        ? _mockGroups
+        : _mockGroups.where((grp) {
+            final name = (grp['name'] ?? '').toString().toLowerCase();
+            final teamName = (grp['team_name'] ?? '').toString().toLowerCase();
+            final manager = (grp['manager_name'] ?? '').toString().toLowerCase();
+            final tl = (grp['tl_name'] ?? '').toString().toLowerCase();
+            final coord = (grp['coordinator_name'] ?? '').toString().toLowerCase();
+            return name.contains(_groupSearchQuery) ||
+                teamName.contains(_groupSearchQuery) ||
+                manager.contains(_groupSearchQuery) ||
+                tl.contains(_groupSearchQuery) ||
+                coord.contains(_groupSearchQuery);
+          }).toList();
+
+    if (filteredGroups.isEmpty) {
+      return const Center(child: Text('No groups match your search.'));
+    }
+
+    // Use SingleChildScrollView + Column (same pattern as working Team tab)
+    return SingleChildScrollView(
+      padding: const EdgeInsets.only(bottom: 80),
+      child: Column(
+        children: List.generate(filteredGroups.length, (index) {
+          try {
+            final grp = filteredGroups[index];
+            final groupId = grp['id']?.toString();
+            final groupMembers = _getGroupMemberNames(groupId);
+            List<String> explicitNames = [];
+            try {
+              if (grp['member_names'] != null && grp['member_names'] is List) {
+                explicitNames = (grp['member_names'] as List).map((e) => e.toString()).toList();
+              } else if (grp['members'] != null && grp['members'] is List) {
+                explicitNames = (grp['members'] as List).map((uid) => _getUserNameByUid(uid.toString()) ?? uid.toString()).toList();
+              }
+            } catch (_) {}
+            final allNames = {...groupMembers, ...explicitNames}.toList();
+            final memberCount = allNames.length;
+
+            return Card(
+              margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              child: ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: Colors.indigo,
+                  child: Text(
+                    '${index + 1}',
+                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
                 ),
-                Text('Coordinator: ${grp['coordinator_name'] ?? 'N/A'}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                const SizedBox(height: 4),
-                Row(
+                title: Text('${grp['name'] ?? ''}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    InkWell(
-                      onTap: () => _showTeamMembersDialog('${grp['name'] ?? ''}', allNames),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: memberCount > 0 ? Colors.green.shade50 : Colors.grey.shade100,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: memberCount > 0 ? Colors.green.shade200 : Colors.grey.shade300),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              '$memberCount member${memberCount == 1 ? '' : 's'}',
-                              style: TextStyle(fontSize: 12, color: memberCount > 0 ? Colors.green.shade700 : Colors.grey.shade600, fontWeight: FontWeight.w500),
-                            ),
-                            const SizedBox(width: 4),
-                            Icon(Icons.visibility, size: 14, color: Colors.green.shade400),
-                          ],
-                        ),
-                      ),
+                    Text('Team: ${grp['team_name'] ?? 'N/A'}', style: const TextStyle(fontSize: 12)),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        Text('Mgr: ${grp['manager_name'] ?? 'N/A'}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                        Text('TL: ${grp['tl_name'] ?? 'N/A'}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    _buildStatusChip(grp['status'] == true),
+                    Text('Coordinator: ${grp['coordinator_name'] ?? 'N/A'}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        InkWell(
+                          onTap: () => _showTeamMembersDialog('${grp['name'] ?? ''}', allNames),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: memberCount > 0 ? Colors.green.shade50 : Colors.grey.shade100,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: memberCount > 0 ? Colors.green.shade200 : Colors.grey.shade300),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  '$memberCount member${memberCount == 1 ? '' : 's'}',
+                                  style: TextStyle(fontSize: 12, color: memberCount > 0 ? Colors.green.shade700 : Colors.grey.shade600, fontWeight: FontWeight.w500),
+                                ),
+                                const SizedBox(width: 4),
+                                Icon(Icons.visibility, size: 14, color: Colors.green.shade400),
+                              ],
+                            ),
+                          ),
+                        ),
+                        _buildStatusChip(grp['status'] == true),
+                      ],
+                    ),
                   ],
                 ),
-              ],
-            ),
-            trailing: _canModify
-              ? Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(icon: const Icon(Icons.edit, size: 18), onPressed: () => _showEditGroupDialog(grp)),
-                    IconButton(icon: const Icon(Icons.delete, size: 18, color: Colors.red), onPressed: () => _confirmDeleteGroup(grp['id'], grp['name'])),
-                  ],
-                )
-              : null,
-            isThreeLine: true,
-          ),
-        );
-      },
+                trailing: _canModify
+                  ? Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(icon: const Icon(Icons.edit, size: 18), onPressed: () => _showEditGroupDialog(grp)),
+                        IconButton(icon: const Icon(Icons.delete, size: 18, color: Colors.red), onPressed: () => _confirmDeleteGroup(grp['id'], grp['name'])),
+                      ],
+                    )
+                  : null,
+                isThreeLine: true,
+              ),
+            );
+          } catch (e) {
+            return Card(
+              margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              color: Colors.red.shade50,
+              child: ListTile(
+                leading: const Icon(Icons.error, color: Colors.red),
+                title: Text('Error rendering group ${index + 1}'),
+                subtitle: Text('$e', style: const TextStyle(fontSize: 11)),
+              ),
+            );
+          }
+        }),
+      ),
     );
   }
 
@@ -1778,21 +1892,28 @@ class _AdminScreenState extends State<AdminScreen>
       children: [
         Column(
           children: [
-            // DEBUG BANNER - remove after fixing
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(8),
-              color: Colors.blue.shade100,
-              child: Text(
-                'DEBUG: users=${_mockUsers.length} | status=$_debugUserLoadStatus',
-                style: const TextStyle(fontSize: 11, color: Colors.black87),
-              ),
-            ),
             Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('User / Member / Emp', style: Theme.of(context).textTheme.titleLarge),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text('User / Member / Emp', style: Theme.of(context).textTheme.titleLarge),
+                      ),
+                      // Version label for deployment verification
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.green.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.green.shade200),
+                        ),
+                        child: Text('v73', style: TextStyle(fontSize: 9, color: Colors.green.shade700)),
+                      ),
+                    ],
+                  ),
                   if (usersWithoutTeam > 0) ...[
                     const SizedBox(height: 8),
                     Container(
@@ -1808,7 +1929,7 @@ class _AdminScreenState extends State<AdminScreen>
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              '$usersWithoutTeam user(s) have no team assigned. Click on a user to edit and assign their team. Role-based lead visibility requires team assignment.',
+                              '$usersWithoutTeam user(s) have no team assigned. Click on a user to edit and assign their team.',
                               style: TextStyle(fontSize: 12, color: Colors.orange.shade800),
                             ),
                           ),
@@ -1827,6 +1948,29 @@ class _AdminScreenState extends State<AdminScreen>
                       ),
                     ),
                   ],
+                  Text('${_mockUsers.length} users loaded', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _userSearchController,
+                    decoration: InputDecoration(
+                      hintText: 'Search users by name, email, role...',
+                      prefixIcon: const Icon(Icons.search, size: 20),
+                      suffixIcon: _userSearchQuery.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear, size: 18),
+                              onPressed: () {
+                                _userSearchController.clear();
+                                setState(() => _userSearchQuery = '');
+                              },
+                            )
+                          : null,
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                    onChanged: (v) => setState(() => _userSearchQuery = v.toLowerCase()),
+                  ),
+                  const SizedBox(height: 4),
                 ],
               ),
             ),
@@ -1862,71 +2006,104 @@ class _AdminScreenState extends State<AdminScreen>
         ),
       );
     }
-    // Use ListView instead of DataTable to avoid rendering issues
-    return ListView.builder(
+
+    // Apply user search filter
+    final filteredUsers = _userSearchQuery.isEmpty
+        ? _mockUsers
+        : _mockUsers.where((u) {
+            final name = u.name.toLowerCase();
+            final email = u.email.toLowerCase();
+            final role = u.role.label.toLowerCase();
+            final team = _getTeamName(u.teamId).toLowerCase();
+            final group = _getGroupName(u.groupId).toLowerCase();
+            return name.contains(_userSearchQuery) ||
+                email.contains(_userSearchQuery) ||
+                role.contains(_userSearchQuery) ||
+                team.contains(_userSearchQuery) ||
+                group.contains(_userSearchQuery);
+          }).toList();
+
+    if (filteredUsers.isEmpty) {
+      return const Center(child: Text('No users match your search.'));
+    }
+
+    // Use SingleChildScrollView + Column (same pattern as working Team tab)
+    return SingleChildScrollView(
       padding: const EdgeInsets.only(bottom: 80),
-      itemCount: _mockUsers.length,
-      itemBuilder: (context, index) {
-        final u = _mockUsers[index];
-        final hasNoTeam = u.teamId == null || u.teamId!.isEmpty;
-        return Card(
-          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-          color: hasNoTeam ? Colors.orange.shade50 : null,
-          child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: _getRoleColor(u.role),
-              child: Text(
-                '${index + 1}',
-                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+      child: Column(
+        children: List.generate(filteredUsers.length, (index) {
+          try {
+            final u = filteredUsers[index];
+            final hasNoTeam = u.teamId == null || u.teamId!.isEmpty;
+            return Card(
+              margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              color: hasNoTeam ? Colors.orange.shade50 : null,
+              child: ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: _getRoleColor(u.role),
+                  child: Text(
+                    '${index + 1}',
+                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                title: Text(u.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(u.email, style: const TextStyle(fontSize: 12)),
+                    const SizedBox(height: 2),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: [
+                        _buildRoleChip(u.role),
+                        _buildStatusChip(u.isActive),
+                        if (hasNoTeam)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.shade100,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text('No Team', style: TextStyle(fontSize: 10, color: Colors.orange.shade800)),
+                          ),
+                      ],
+                    ),
+                    if (u.phone != null && u.phone!.isNotEmpty)
+                      Text('Phone: ${u.phone}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                    Wrap(
+                      spacing: 12,
+                      children: [
+                        Text('Team: ${_getTeamName(u.teamId)}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                        Text('Group: ${_getGroupName(u.groupId)}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                      ],
+                    ),
+                  ],
+                ),
+                trailing: _isSuperAdmin
+                  ? IconButton(
+                      icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                      tooltip: 'Delete User',
+                      onPressed: () => _confirmDeleteUser(u),
+                    )
+                  : const Icon(Icons.chevron_right),
+                isThreeLine: true,
+                onTap: () => _showEditMemberDialog(u),
               ),
-            ),
-            title: Text(u.name, style: const TextStyle(fontWeight: FontWeight.w600)),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(u.email, style: const TextStyle(fontSize: 12)),
-                const SizedBox(height: 2),
-                Row(
-                  children: [
-                    _buildRoleChip(u.role),
-                    const SizedBox(width: 6),
-                    _buildStatusChip(u.isActive),
-                    if (hasNoTeam) ...[
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.orange.shade100,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text('No Team', style: TextStyle(fontSize: 10, color: Colors.orange.shade800)),
-                      ),
-                    ],
-                  ],
-                ),
-                if (u.phone != null && u.phone!.isNotEmpty)
-                  Text('Phone: ${u.phone}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                Row(
-                  children: [
-                    Text('Team: ${_getTeamName(u.teamId)}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                    const SizedBox(width: 12),
-                    Text('Group: ${_getGroupName(u.groupId)}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                  ],
-                ),
-              ],
-            ),
-            trailing: _isSuperAdmin
-              ? IconButton(
-                  icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
-                  tooltip: 'Delete User',
-                  onPressed: () => _confirmDeleteUser(u),
-                )
-              : const Icon(Icons.chevron_right),
-            isThreeLine: true,
-            onTap: () => _showEditMemberDialog(u),
-          ),
-        );
-      },
+            );
+          } catch (e) {
+            return Card(
+              margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              color: Colors.red.shade50,
+              child: ListTile(
+                leading: const Icon(Icons.error, color: Colors.red),
+                title: Text('Error rendering user ${index + 1}'),
+                subtitle: Text('$e', style: const TextStyle(fontSize: 11)),
+              ),
+            );
+          }
+        }),
+      ),
     );
   }
 
@@ -2134,7 +2311,10 @@ class _AdminScreenState extends State<AdminScreen>
                     DropdownButtonFormField<UserRole>(
                       value: selectedRole,
                       decoration: const InputDecoration(labelText: 'Select Role'),
-                      items: UserRole.values.map((r) => DropdownMenuItem(value: r, child: Text(r.label))).toList(),
+                      items: UserRole.values
+                          .where((r) => r == UserRole.superAdmin ? widget.currentUser?.role == UserRole.superAdmin : true)
+                          .map((r) => DropdownMenuItem(value: r, child: Text(r.label)))
+                          .toList(),
                       onChanged: (v) => setDialogState(() => selectedRole = v ?? UserRole.member),
                     ),
                     const SizedBox(height: 12),

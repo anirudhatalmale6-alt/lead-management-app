@@ -2,12 +2,10 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper: get user doc
     function getUserData() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
-    // Helper: check role
     function hasRole(role) {
       return getUserData().role == role;
     }
@@ -31,8 +29,8 @@ service cloud.firestore {
     // Users collection
     match /users/{userId} {
       allow read: if isAuthenticated();
-      allow create: if isAdmin();
-      allow update: if isAdmin() || request.auth.uid == userId;
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
       allow delete: if isAdmin();
     }
 
@@ -48,16 +46,43 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin() || isManager();
     }
 
-    // Leads collection
+    // Leads collection + all subcollections (history, etc.)
     match /leads/{leadId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated();
       allow update: if isAuthenticated();
       allow delete: if isAdmin();
+
+      match /{subcollection}/{docId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated();
+        allow update: if isAuthenticated();
+        allow delete: if isAdmin();
+      }
+    }
+
+    // Meetings collection
+    match /meetings/{meetingId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAdmin() || isManager();
+    }
+
+    // Settings collection (SMTP config, calendar config, etc.)
+    match /settings/{settingId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Business categories (for email templates)
+    match /business_categories/{categoryId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
     }
 
     // Email templates
-    match /templates_email/{templateId} {
+    match /email_templates/{templateId} {
       allow read: if isAuthenticated();
       allow write: if isAdmin();
     }
@@ -69,15 +94,18 @@ service cloud.firestore {
     }
 
     // Email logs
-    match /logs_email/{logId} {
+    match /email_logs/{logId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
     }
 
-    // Meet logs
-    match /logs_meet/{logId} {
+    // Email queue
+    match /email_queue/{queueId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAdmin();
     }
 
     // Calendar events
@@ -89,7 +117,7 @@ service cloud.firestore {
 
     // Activity logs / audit trail
     match /activity_logs/{logId} {
-      allow read: if isAdmin() || isManager();
+      allow read: if isAuthenticated();
       allow create: if isAuthenticated();
     }
   }

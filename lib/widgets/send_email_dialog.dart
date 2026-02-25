@@ -37,28 +37,62 @@ class _SendEmailDialogState extends State<SendEmailDialog> {
   }
 
   Future<void> _loadData() async {
-    final categories = await _emailService.getCategories();
-    setState(() {
-      _categories = categories;
-      _loading = false;
-      // Auto-select category based on lead's product
-      _selectedCategoryId =
-          _emailService.suggestCategoryForLead(widget.lead, categories);
-    });
-    if (_selectedCategoryId != null) {
-      await _loadTemplates(_selectedCategoryId!);
+    try {
+      final categories = await _emailService.getCategories()
+          .timeout(const Duration(seconds: 8), onTimeout: () {
+        debugPrint('SendEmailDialog: getCategories timed out');
+        return <BusinessCategory>[];
+      });
+      if (mounted) {
+        setState(() {
+          _categories = categories;
+          _loading = false;
+          // Auto-select category based on lead's product
+          _selectedCategoryId =
+              _emailService.suggestCategoryForLead(widget.lead, categories);
+        });
+        if (_selectedCategoryId != null) {
+          await _loadTemplates(_selectedCategoryId!);
+        }
+      }
+    } catch (e) {
+      debugPrint('SendEmailDialog: Error loading categories: $e');
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _categories = [];
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not load templates. Please check Firestore rules are published.'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
     }
   }
 
   Future<void> _loadTemplates(String categoryId) async {
-    final templates =
-        await _emailService.getTemplatesForCategory(categoryId);
-    setState(() {
-      _templates = templates;
-      _selectedTemplate = null;
-      _previewSubject = null;
-      _previewBody = null;
-    });
+    try {
+      final templates =
+          await _emailService.getTemplatesForCategory(categoryId);
+      if (mounted) {
+        setState(() {
+          _templates = templates;
+          _selectedTemplate = null;
+          _previewSubject = null;
+          _previewBody = null;
+        });
+      }
+    } catch (e) {
+      debugPrint('SendEmailDialog: Error loading templates: $e');
+      if (mounted) {
+        setState(() {
+          _templates = [];
+        });
+      }
+    }
   }
 
   void _selectTemplate(EmailTemplate template) {
@@ -205,13 +239,23 @@ class _SendEmailDialogState extends State<SendEmailDialog> {
                     const SizedBox(height: 16),
                     // Category selector
                     if (_categories.isEmpty)
-                      const Card(
-                        color: Colors.orange,
-                        child: Padding(
+                      Card(
+                        color: Colors.orange.shade700,
+                        child: const Padding(
                           padding: EdgeInsets.all(12),
-                          child: Text(
-                            'No business categories configured. Go to Email Settings to add categories and templates.',
-                            style: TextStyle(color: Colors.white),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'No business categories found.',
+                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                              ),
+                              SizedBox(height: 4),
+                              Text(
+                                'Please ensure Firestore security rules are published in Firebase Console, then go to Email Settings to add categories and templates.',
+                                style: TextStyle(color: Colors.white, fontSize: 13),
+                              ),
+                            ],
                           ),
                         ),
                       )

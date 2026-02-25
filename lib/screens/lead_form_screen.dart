@@ -468,32 +468,36 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
         label: 'Email',
         keyboardType: TextInputType.emailAddress,
       ),
-      // Country dropdown
-      DropdownButtonFormField<String>(
-        value: _selectedCountry,
-        decoration: const InputDecoration(
-          labelText: 'Country',
-          border: OutlineInputBorder(),
-        ),
-        items: [
-          const DropdownMenuItem<String>(
-            value: null,
-            child: Text('Select Country'),
-          ),
-          ...LocationData.countries.map((country) => DropdownMenuItem<String>(
-                value: country,
-                child: Text(country),
-              )),
-        ],
-        onChanged: (value) {
+      // Country dropdown (searchable)
+      Autocomplete<String>(
+        optionsBuilder: (textEditingValue) {
+          final options = ['Other', ...LocationData.countries];
+          if (textEditingValue.text.isEmpty) return options;
+          return options.where((c) => c.toLowerCase().contains(textEditingValue.text.toLowerCase()));
+        },
+        initialValue: TextEditingValue(text: _selectedCountry ?? ''),
+        displayStringForOption: (c) => c,
+        fieldViewBuilder: (context, controller, focusNode, onSubmitted) {
+          return TextFormField(
+            controller: controller,
+            focusNode: focusNode,
+            decoration: const InputDecoration(
+              labelText: 'Country',
+              border: OutlineInputBorder(),
+              suffixIcon: Icon(Icons.arrow_drop_down),
+            ),
+            onFieldSubmitted: (_) => onSubmitted(),
+          );
+        },
+        onSelected: (value) {
           setState(() {
-            _selectedCountry = value;
+            _selectedCountry = value == 'Other' ? 'Other' : value;
             _selectedState = null;
             _selectedCity = null;
             _customCountryController.clear();
             _customStateController.clear();
             _customCityController.clear();
-            _availableStates = value != null ? LocationData.getStates(value) : [];
+            _availableStates = (value != null && value != 'Other') ? LocationData.getStates(value) : [];
             _availableCities = [];
           });
         },
@@ -504,35 +508,38 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
           controller: _customCountryController,
           label: 'Enter Country Name',
         ),
-      // State dropdown
-      DropdownButtonFormField<String>(
-        value: _selectedState,
-        decoration: const InputDecoration(
-          labelText: 'State',
-          border: OutlineInputBorder(),
-        ),
-        items: [
-          const DropdownMenuItem<String>(
-            value: null,
-            child: Text('Select State'),
-          ),
-          ..._availableStates.map((state) => DropdownMenuItem<String>(
-                value: state,
-                child: Text(state),
-              )),
-        ],
-        onChanged: _selectedCountry == null
-            ? null
-            : (value) {
-                setState(() {
-                  _selectedState = value;
-                  _selectedCity = null;
-                  _customStateController.clear();
-                  _customCityController.clear();
-                  _availableCities =
-                      value != null ? LocationData.getCities(value) : [];
-                });
-              },
+      // State dropdown (searchable)
+      Autocomplete<String>(
+        optionsBuilder: (textEditingValue) {
+          if (_selectedCountry == null) return const Iterable<String>.empty();
+          final options = ['Other', ..._availableStates];
+          if (textEditingValue.text.isEmpty) return options;
+          return options.where((s) => s.toLowerCase().contains(textEditingValue.text.toLowerCase()));
+        },
+        initialValue: TextEditingValue(text: _selectedState ?? ''),
+        displayStringForOption: (s) => s,
+        fieldViewBuilder: (context, controller, focusNode, onSubmitted) {
+          return TextFormField(
+            controller: controller,
+            focusNode: focusNode,
+            enabled: _selectedCountry != null,
+            decoration: const InputDecoration(
+              labelText: 'State',
+              border: OutlineInputBorder(),
+              suffixIcon: Icon(Icons.arrow_drop_down),
+            ),
+            onFieldSubmitted: (_) => onSubmitted(),
+          );
+        },
+        onSelected: (value) {
+          setState(() {
+            _selectedState = value == 'Other' ? 'Other' : value;
+            _selectedCity = null;
+            _customStateController.clear();
+            _customCityController.clear();
+            _availableCities = (value != null && value != 'Other') ? LocationData.getCities(value) : [];
+          });
+        },
       ),
       // Custom State text field (when "Other" is selected)
       if (_selectedState == 'Other')
@@ -540,31 +547,35 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
           controller: _customStateController,
           label: 'Enter State Name',
         ),
-      // City dropdown
-      DropdownButtonFormField<String>(
-        value: _selectedCity,
-        decoration: const InputDecoration(
-          labelText: 'City',
-          border: OutlineInputBorder(),
-        ),
-        items: [
-          const DropdownMenuItem<String>(
-            value: null,
-            child: Text('Select City'),
-          ),
-          ..._availableCities.map((city) => DropdownMenuItem<String>(
-                value: city,
-                child: Text(city),
-              )),
-        ],
-        onChanged: _selectedState == null
-            ? null
-            : (value) {
-                setState(() {
-                  _selectedCity = value;
-                  _customCityController.clear();
-                });
-              },
+      // City dropdown (searchable)
+      Autocomplete<String>(
+        optionsBuilder: (textEditingValue) {
+          if (_selectedState == null) return const Iterable<String>.empty();
+          final options = ['Other', ..._availableCities];
+          if (textEditingValue.text.isEmpty) return options;
+          return options.where((c) => c.toLowerCase().contains(textEditingValue.text.toLowerCase()));
+        },
+        initialValue: TextEditingValue(text: _selectedCity ?? ''),
+        displayStringForOption: (c) => c,
+        fieldViewBuilder: (context, controller, focusNode, onSubmitted) {
+          return TextFormField(
+            controller: controller,
+            focusNode: focusNode,
+            enabled: _selectedState != null,
+            decoration: const InputDecoration(
+              labelText: 'City',
+              border: OutlineInputBorder(),
+              suffixIcon: Icon(Icons.arrow_drop_down),
+            ),
+            onFieldSubmitted: (_) => onSubmitted(),
+          );
+        },
+        onSelected: (value) {
+          setState(() {
+            _selectedCity = value == 'Other' ? 'Other' : value;
+            _customCityController.clear();
+          });
+        },
       ),
       // Custom City text field (when "Other" is selected)
       if (_selectedCity == 'Other')

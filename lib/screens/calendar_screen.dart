@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/meeting.dart';
 import '../models/user.dart';
 import '../models/lead.dart';
@@ -48,6 +49,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
   String? _filterTeamId;
   String? _filterGroupId;
   String? _filterUserId;
+
+  // Cache: leadId -> assignedTo email/uid for checking lead assignment visibility
+  Map<String, String> _leadAssigneeCache = {};
 
   @override
   void initState() {
@@ -164,37 +168,25 @@ class _CalendarScreenState extends State<CalendarScreen> {
       final user = widget.currentUser;
       final role = user.role;
 
-      // Role-based meeting loading (same logic as leads)
-      switch (role) {
-        case UserRole.superAdmin:
-          // Super Admin has global view
-          meetings = await _calendarService.getAllMeetings();
-          break;
-        case UserRole.admin:
-        case UserRole.manager:
-        case UserRole.teamLead:
-          // Admin, Manager, TL see only their team's meetings
-          if (user.teamId != null && user.teamId!.isNotEmpty) {
-            meetings = await _calendarService.getMeetingsByTeam(user.teamId!);
-          } else {
-            // No team assigned — fall back to own meetings
-            meetings = await _calendarService.getMeetingsByUser(user.uid, user.email);
-          }
-          break;
-        case UserRole.coordinator:
-          // Coordinator sees only their group's meetings
-          if (user.groupId != null && user.groupId!.isNotEmpty) {
-            meetings = await _calendarService.getMeetingsByGroup(user.groupId!);
-          } else if (user.teamId != null && user.teamId!.isNotEmpty) {
-            meetings = await _calendarService.getMeetingsByTeam(user.teamId!);
-          } else {
-            meetings = await _calendarService.getMeetingsByUser(user.uid, user.email);
-          }
-          break;
-        case UserRole.member:
-          // Own meetings only
-          meetings = await _calendarService.getMeetingsByUser(user.uid, user.email);
-          break;
+      // Load ALL meetings for all roles.
+      // _filteredMeetings handles scope filtering (my vs team) including
+      // lead assignment checks (e.g. manager creates meeting on lead assigned to employee).
+      // Previously members only loaded their own meetings, missing meetings
+      // created by managers on leads assigned to them.
+      meetings = await _calendarService.getAllMeetings();
+
+      debugPrint('Calendar: Got ${meetings.length} meetings from meetings collection');
+
+      // Always load meetings from lead documents (leads with meetingDate set)
+      // and merge them with meetings collection (avoiding duplicates by leadId)
+      try {
+        final leadMeetings = await _loadMeetingsFromLeads(meetings);
+        if (leadMeetings.isNotEmpty) {
+          meetings.addAll(leadMeetings);
+          debugPrint('Calendar: Added ${leadMeetings.length} meetings from lead documents');
+        }
+      } catch (e) {
+        debugPrint('Calendar: Error loading lead meetings: $e');
       }
 
       if (mounted) {
@@ -204,47 +196,178 @@ class _CalendarScreenState extends State<CalendarScreen> {
         });
       }
     } catch (e) {
-      if (mounted) {
-        setState(() => _isLoading = false);
+      debugPrint('Calendar: Error loading meetings: $e');
+      // Fallback: try loading from lead documents only
+      try {
+        final leadMeetings = await _loadMeetingsFromLeads([]);
+        if (mounted) {
+          setState(() {
+            _meetings = leadMeetings;
+            _isLoading = false;
+          });
+        }
+      } catch (_) {
+        if (mounted) {
+          setState(() => _isLoading = false);
+        }
       }
     }
+  }
+
+  /// Load meetings from lead documents that have meeting_date set.
+  /// Avoids duplicates by checking existing meeting IDs.
+  Future<List<Meeting>> _loadMeetingsFromLeads(List<Meeting> existingMeetings) async {
+    final leadService = LeadService();
+    final existingLeadIds = existingMeetings
+        .where((m) => m.leadId != null)
+        .map((m) => m.leadId!)
+        .toSet();
+
+    final allLeads = await leadService.getAllLeads();
+    final leadMeetings = <Meeting>[];
+
+    // Build lead assignee cache for all leads (used by _filteredMeetings)
+    final newCache = <String, String>{};
+    for (final lead in allLeads) {
+      if (lead.assignedTo.isNotEmpty) {
+        newCache[lead.id] = lead.assignedTo;
+      }
+    }
+    _leadAssigneeCache = newCache;
+
+    for (final lead in allLeads) {
+      // Skip if no meeting scheduled or if we already have a meeting for this lead
+      if (lead.meetingDate == null || existingLeadIds.contains(lead.id)) continue;
+
+      final timeParts = lead.meetingTime.split(':');
+      final hour = timeParts.isNotEmpty ? int.tryParse(timeParts[0]) ?? 0 : 0;
+      final minute = timeParts.length > 1 ? int.tryParse(timeParts[1]) ?? 0 : 0;
+      final startTime = DateTime(
+        lead.meetingDate!.year,
+        lead.meetingDate!.month,
+        lead.meetingDate!.day,
+        hour,
+        minute,
+      );
+
+      leadMeetings.add(Meeting(
+        id: 'lead_${lead.id}',
+        title: '${lead.meetingAgenda.label} - ${lead.clientName}',
+        description: lead.meetingAgenda.label,
+        startTime: startTime,
+        endTime: startTime.add(const Duration(minutes: 30)),
+        type: MeetingType.googleMeet,
+        status: MeetingStatus.scheduled,
+        leadId: lead.id,
+        leadName: lead.clientName,
+        meetLink: lead.meetingLink.isNotEmpty ? lead.meetingLink : null,
+        createdBy: '',
+        createdAt: startTime,
+        organizerUid: lead.assignedTo.isNotEmpty ? lead.assignedTo : null,
+        teamId: lead.teamId.isNotEmpty ? lead.teamId : null,
+        groupId: lead.groupId.isNotEmpty ? lead.groupId : null,
+      ));
+    }
+
+    return leadMeetings;
+  }
+
+  /// Check if current user is the assignee of a lead (for meeting visibility)
+  bool _isCurrentUserAssignedToLead(String leadId) {
+    final assignee = _leadAssigneeCache[leadId];
+    if (assignee == null) return false;
+    return assignee == widget.currentUser.uid ||
+        assignee == widget.currentUser.email;
   }
 
   List<Meeting> get _filteredMeetings {
     var results = _meetings;
 
-    // Additional client-side filter for "my" scope
-    // The _loadMeetings already filters by role (team/group/user)
-    // This additional filter further restricts to user's own meetings if scope is 'my'
+    // 'my' scope: show only meetings where user is directly involved
     if (_calendarScope == 'my') {
+      final uid = widget.currentUser.uid;
+      final email = widget.currentUser.email;
       results = results.where((m) {
-        final isOrganizer = m.organizerUid == widget.currentUser.uid;
-        final isGuest = m.guests.any((g) => g.email == widget.currentUser.email);
-        final isAssigned = m.assignedTo == widget.currentUser.uid;
-        return isOrganizer || isGuest || isAssigned;
+        final isOrganizer = m.organizerUid == uid;
+        final isGuest = m.guests.any((g) => g.email == email);
+        final isAssigned = m.assignedTo == uid || m.assignedTo == email;
+        final isCreator = m.createdBy == email || m.createdBy == uid;
+        // Also check if the meeting's lead is assigned to current user
+        // This handles: manager creates meeting on a lead assigned to employee
+        bool isLeadAssignee = false;
+        if (m.leadId != null) {
+          isLeadAssignee = _isCurrentUserAssignedToLead(m.leadId!);
+        }
+        return isOrganizer || isGuest || isAssigned || isCreator || isLeadAssignee;
       }).toList();
     }
-    // Hierarchy filter: Team > Group > User (when in team scope)
+    // 'team' scope: show team/group meetings with hierarchy filter dropdowns
     if (_calendarScope == 'team') {
-      // Filter by team - find all users in selected team, then filter meetings to those users
-      if (_filterTeamId != null) {
-        final teamUserUids = _allUsers.where((u) => u.teamId == _filterTeamId).map((u) => u.uid).toSet();
-        final teamUserEmails = _allUsers.where((u) => u.teamId == _filterTeamId).map((u) => u.email).toSet();
-        results = results.where((m) {
-          return teamUserUids.contains(m.organizerUid) ||
-              teamUserEmails.any((email) => m.guests.any((g) => g.email == email)) ||
-              teamUserUids.contains(m.assignedTo);
-        }).toList();
+      final userRole = widget.currentUser.role;
+      final userTeamId = widget.currentUser.teamId;
+      final userGroupId = widget.currentUser.groupId;
+
+      // Build lookup sets for checking if a user belongs to a team/group
+      final teamUserUids = <String, Set<String>>{};
+      final teamUserEmails = <String, Set<String>>{};
+      final groupUserUids = <String, Set<String>>{};
+      final groupUserEmails = <String, Set<String>>{};
+      for (final u in _allUsers) {
+        if (u.teamId != null && u.teamId!.isNotEmpty) {
+          teamUserUids.putIfAbsent(u.teamId!, () => {}).add(u.uid);
+          teamUserEmails.putIfAbsent(u.teamId!, () => {}).add(u.email);
+        }
+        if (u.groupId != null && u.groupId!.isNotEmpty) {
+          groupUserUids.putIfAbsent(u.groupId!, () => {}).add(u.uid);
+          groupUserEmails.putIfAbsent(u.groupId!, () => {}).add(u.email);
+        }
       }
-      // Filter by group
+
+      // Helper: check if meeting belongs to a specific team
+      bool meetingBelongsToTeam(Meeting m, String tid) {
+        if (m.teamId == tid) return true;
+        final uids = teamUserUids[tid] ?? {};
+        final emails = teamUserEmails[tid] ?? {};
+        return uids.contains(m.organizerUid) || emails.contains(m.createdBy) ||
+               (m.assignedTo != null && (uids.contains(m.assignedTo) || emails.contains(m.assignedTo)));
+      }
+
+      // Helper: check if meeting belongs to a specific group
+      bool meetingBelongsToGroup(Meeting m, String gid) {
+        if (m.groupId == gid) return true;
+        final uids = groupUserUids[gid] ?? {};
+        final emails = groupUserEmails[gid] ?? {};
+        return uids.contains(m.organizerUid) || emails.contains(m.createdBy) ||
+               (m.assignedTo != null && (uids.contains(m.assignedTo) || emails.contains(m.assignedTo)));
+      }
+
+      // Step 1: For non-super-admin, ALWAYS scope to their team/group first
+      if (userRole != UserRole.superAdmin) {
+        if (userRole == UserRole.coordinator && userGroupId != null && userGroupId.isNotEmpty) {
+          // Coordinator: restrict to their group
+          results = results.where((m) =>
+            meetingBelongsToGroup(m, userGroupId) ||
+            m.organizerUid == widget.currentUser.uid ||
+            m.createdBy == widget.currentUser.email ||
+            m.guests.any((g) => g.email == widget.currentUser.email)
+          ).toList();
+        } else if (userTeamId != null && userTeamId.isNotEmpty) {
+          // Admin/Manager/TL: restrict to their team
+          results = results.where((m) =>
+            meetingBelongsToTeam(m, userTeamId) ||
+            m.organizerUid == widget.currentUser.uid ||
+            m.createdBy == widget.currentUser.email ||
+            m.guests.any((g) => g.email == widget.currentUser.email)
+          ).toList();
+        }
+      }
+
+      // Step 2: Apply hierarchy filter dropdowns (narrows further within allowed scope)
+      if (_filterTeamId != null) {
+        results = results.where((m) => meetingBelongsToTeam(m, _filterTeamId!)).toList();
+      }
       if (_filterGroupId != null) {
-        final groupUserUids = _allUsers.where((u) => u.groupId == _filterGroupId).map((u) => u.uid).toSet();
-        final groupUserEmails = _allUsers.where((u) => u.groupId == _filterGroupId).map((u) => u.email).toSet();
-        results = results.where((m) {
-          return groupUserUids.contains(m.organizerUid) ||
-              groupUserEmails.any((email) => m.guests.any((g) => g.email == email)) ||
-              groupUserUids.contains(m.assignedTo);
-        }).toList();
+        results = results.where((m) => meetingBelongsToGroup(m, _filterGroupId!)).toList();
       }
       // Filter by specific user
       if (_filterUserId != null) {
@@ -253,19 +376,15 @@ class _CalendarScreenState extends State<CalendarScreen> {
           results = results.where((m) {
             final isOrganizer = m.organizerUid == selectedUser.uid;
             final isGuest = m.guests.any((g) => g.email == selectedUser.email);
-            final isAssigned = m.assignedTo == selectedUser.uid;
-            return isOrganizer || isGuest || isAssigned;
-          }).toList();
-        }
-      } else if (_selectedMemberUid != null) {
-        // Legacy member dropdown filter (backward compat)
-        final selectedUser = _visibleUsers.where((u) => u.uid == _selectedMemberUid).firstOrNull;
-        if (selectedUser != null) {
-          results = results.where((m) {
-            final isOrganizer = m.organizerUid == selectedUser.uid;
-            final isGuest = m.guests.any((g) => g.email == selectedUser.email);
-            final isAssigned = m.assignedTo == selectedUser.uid;
-            return isOrganizer || isGuest || isAssigned;
+            final isAssigned = m.assignedTo == selectedUser.uid || m.assignedTo == selectedUser.email;
+            final isCreator = m.createdBy == selectedUser.email;
+            // Also check lead assignment
+            bool isLeadAssignee = false;
+            if (m.leadId != null) {
+              final assignee = _leadAssigneeCache[m.leadId!];
+              isLeadAssignee = assignee == selectedUser.uid || assignee == selectedUser.email;
+            }
+            return isOrganizer || isGuest || isAssigned || isCreator || isLeadAssignee;
           }).toList();
         }
       }
@@ -342,33 +461,44 @@ class _CalendarScreenState extends State<CalendarScreen> {
         title: const Text('Calendar'),
         actions: [
           // View type toggle
-          SegmentedButton<CalendarViewType>(
-            segments: const [
-              ButtonSegment(
-                value: CalendarViewType.month,
-                label: Text('Month'),
-                icon: Icon(Icons.calendar_view_month, size: 18),
+          if (MediaQuery.of(context).size.width > 500)
+            SegmentedButton<CalendarViewType>(
+              segments: const [
+                ButtonSegment(
+                  value: CalendarViewType.month,
+                  label: Text('Month'),
+                  icon: Icon(Icons.calendar_view_month, size: 18),
+                ),
+                ButtonSegment(
+                  value: CalendarViewType.week,
+                  label: Text('Week'),
+                  icon: Icon(Icons.calendar_view_week, size: 18),
+                ),
+                ButtonSegment(
+                  value: CalendarViewType.day,
+                  label: Text('Day'),
+                  icon: Icon(Icons.calendar_view_day, size: 18),
+                ),
+              ],
+              selected: {_viewType},
+              onSelectionChanged: (selection) {
+                setState(() => _viewType = selection.first);
+              },
+              style: const ButtonStyle(
+                visualDensity: VisualDensity.compact,
               ),
-              ButtonSegment(
-                value: CalendarViewType.week,
-                label: Text('Week'),
-                icon: Icon(Icons.calendar_view_week, size: 18),
-              ),
-              ButtonSegment(
-                value: CalendarViewType.day,
-                label: Text('Day'),
-                icon: Icon(Icons.calendar_view_day, size: 18),
-              ),
-            ],
-            selected: {_viewType},
-            onSelectionChanged: (selection) {
-              setState(() => _viewType = selection.first);
-            },
-            style: ButtonStyle(
-              visualDensity: VisualDensity.compact,
+            )
+          else
+            PopupMenuButton<CalendarViewType>(
+              icon: const Icon(Icons.calendar_view_month),
+              tooltip: 'View',
+              onSelected: (v) => setState(() => _viewType = v),
+              itemBuilder: (ctx) => [
+                PopupMenuItem(value: CalendarViewType.month, child: Text('Month${_viewType == CalendarViewType.month ? " ✓" : ""}')),
+                PopupMenuItem(value: CalendarViewType.week, child: Text('Week${_viewType == CalendarViewType.week ? " ✓" : ""}')),
+                PopupMenuItem(value: CalendarViewType.day, child: Text('Day${_viewType == CalendarViewType.day ? " ✓" : ""}')),
+              ],
             ),
-          ),
-          const SizedBox(width: 8),
           IconButton(
             icon: Badge(
               isLabelVisible: _filterPartyName != null || _filterStatus != null || _filterTeamId != null || _filterGroupId != null || _filterUserId != null,
@@ -380,11 +510,18 @@ class _CalendarScreenState extends State<CalendarScreen> {
             onPressed: () => setState(() => _showFilters = !_showFilters),
             tooltip: 'Filters',
           ),
-          TextButton.icon(
-            onPressed: _goToToday,
-            icon: const Icon(Icons.today),
-            label: const Text('Today'),
-          ),
+          if (MediaQuery.of(context).size.width > 400)
+            TextButton.icon(
+              onPressed: _goToToday,
+              icon: const Icon(Icons.today),
+              label: const Text('Today'),
+            )
+          else
+            IconButton(
+              icon: const Icon(Icons.today),
+              onPressed: _goToToday,
+              tooltip: 'Today',
+            ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadMeetings,
@@ -430,21 +567,46 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 ),
               ],
             ),
-      floatingActionButton: FloatingActionButton.extended(
+      floatingActionButton: FloatingActionButton.small(
         onPressed: () => _openScheduleDialog(preselectedDate: _selectedDate),
-        icon: const Icon(Icons.add),
-        label: const Text('New Meeting'),
+        tooltip: 'New Meeting',
+        child: const Icon(Icons.add),
       ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.miniEndFloat,
     );
   }
 
   Widget _buildCalendarHierarchyFilter() {
+    final userRole = widget.currentUser.role;
+    final userTeamId = widget.currentUser.teamId;
+    final userGroupId = widget.currentUser.groupId;
+
+    // For non-superadmin, restrict teams/groups to their own hierarchy
+    var visibleTeams = _teams.toList();
+    var visibleGroups = _groups.toList();
+    if (userRole != UserRole.superAdmin) {
+      if (userTeamId != null && userTeamId.isNotEmpty) {
+        visibleTeams = _teams.where((t) => t['id'] == userTeamId).toList();
+      } else {
+        visibleTeams = [];
+      }
+      if (userRole == UserRole.coordinator && userGroupId != null && userGroupId.isNotEmpty) {
+        visibleGroups = _groups.where((g) => g['id'] == userGroupId).toList();
+      } else if (userTeamId != null && userTeamId.isNotEmpty) {
+        visibleGroups = _groups.where((g) => g['team_id'] == userTeamId).toList();
+      }
+    }
+
     // Filter groups by selected team
     final filteredGroups = _filterTeamId != null
-        ? _groups.where((g) => g['team_id'] == _filterTeamId).toList()
-        : _groups;
+        ? visibleGroups.where((g) => g['team_id'] == _filterTeamId).toList()
+        : visibleGroups;
     // Filter users by selected team/group
     var filteredUsers = _allUsers.toList();
+    // Non-superadmin: restrict visible users to their team
+    if (userRole != UserRole.superAdmin && userTeamId != null && userTeamId.isNotEmpty) {
+      filteredUsers = filteredUsers.where((u) => u.teamId == userTeamId).toList();
+    }
     if (_filterTeamId != null) {
       filteredUsers = filteredUsers.where((u) => u.teamId == _filterTeamId).toList();
     }
@@ -472,7 +634,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
               ),
               items: [
                 const DropdownMenuItem<String>(value: null, child: Text('All Teams', style: TextStyle(fontSize: 12))),
-                ..._teams.map((t) => DropdownMenuItem<String>(
+                ...visibleTeams.map((t) => DropdownMenuItem<String>(
                   value: t['id'] as String,
                   child: Text(t['name'] as String? ?? '', style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
                 )),
@@ -580,34 +742,37 @@ class _CalendarScreenState extends State<CalendarScreen> {
           children: [
             // Calendar View: My / Team toggle
             if (widget.currentUser.role != UserRole.member) ...[
-              Row(
-                children: [
-                  const Text('Calendar View: ', style: TextStyle(fontWeight: FontWeight.w500)),
-                  const SizedBox(width: 8),
-                  SegmentedButton<String>(
-                    segments: [
-                      const ButtonSegment(value: 'my', label: Text('My Calendar'), icon: Icon(Icons.person, size: 16)),
-                      ButtonSegment(
-                        value: 'team',
-                        label: Text(widget.currentUser.role == UserRole.coordinator ? 'Group Calendar' : 'Team Calendar'),
-                        icon: const Icon(Icons.groups, size: 16),
-                      ),
-                    ],
-                    selected: {_calendarScope},
-                    onSelectionChanged: (selection) {
-                      setState(() {
-                        _calendarScope = selection.first;
-                        if (_calendarScope == 'my') {
-                          _selectedMemberUid = null;
-                          _filterTeamId = null;
-                          _filterGroupId = null;
-                          _filterUserId = null;
-                        }
-                      });
-                    },
-                    style: const ButtonStyle(visualDensity: VisualDensity.compact),
-                  ),
-                ],
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    const Text('Calendar View: ', style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
+                    const SizedBox(width: 8),
+                    SegmentedButton<String>(
+                      segments: [
+                        const ButtonSegment(value: 'my', label: Text('My Calendar'), icon: Icon(Icons.person, size: 16)),
+                        ButtonSegment(
+                          value: 'team',
+                          label: Text(widget.currentUser.role == UserRole.coordinator ? 'Group Calendar' : 'Team Calend..'),
+                          icon: const Icon(Icons.groups, size: 16),
+                        ),
+                      ],
+                      selected: {_calendarScope},
+                      onSelectionChanged: (selection) {
+                        setState(() {
+                          _calendarScope = selection.first;
+                          if (_calendarScope == 'my') {
+                            _selectedMemberUid = null;
+                            _filterTeamId = null;
+                            _filterGroupId = null;
+                            _filterUserId = null;
+                          }
+                        });
+                      },
+                      style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                    ),
+                  ],
+                ),
               ),
             ],
             // Hierarchy filter: Team > Group > User (when team view is selected)
@@ -1437,6 +1602,16 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       onViewLead: meeting.leadId != null
                           ? () => _navigateToLeadDetail(meeting.leadId!)
                           : null,
+                      onEdit: () {
+                        showDialog(
+                          context: context,
+                          builder: (ctx) => ScheduleMeetingDialog(
+                            currentUser: widget.currentUser,
+                            existingMeeting: meeting,
+                            onMeetingCreated: _loadMeetings,
+                          ),
+                        );
+                      },
                     );
                   },
                 ),
@@ -1469,11 +1644,13 @@ class _MeetingDetailCard extends StatelessWidget {
   final Meeting meeting;
   final Function(MeetingStatus) onStatusChange;
   final VoidCallback? onViewLead;
+  final VoidCallback? onEdit;
 
   const _MeetingDetailCard({
     required this.meeting,
     required this.onStatusChange,
     this.onViewLead,
+    this.onEdit,
   });
 
   Color _getStatusColor(MeetingStatus status) {
@@ -1696,8 +1873,15 @@ class _MeetingDetailCard extends StatelessWidget {
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
-                  onPressed: () {
-                    // Open meet link
+                  onPressed: () async {
+                    final link = meeting.meetLink!;
+                    final urlStr = link.startsWith('http') ? link : 'https://$link';
+                    try {
+                      final uri = Uri.parse(urlStr);
+                      await launchUrl(uri, mode: LaunchMode.externalApplication);
+                    } catch (e) {
+                      debugPrint('Could not launch meeting link: $e');
+                    }
                   },
                   icon: const Icon(Icons.video_call, size: 16),
                   label: const Text('Join Meeting'),
@@ -1708,19 +1892,34 @@ class _MeetingDetailCard extends StatelessWidget {
               ),
             ],
             // Action buttons
-            if (meeting.status != MeetingStatus.completed &&
-                meeting.status != MeetingStatus.cancelled) ...[
-              const Divider(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
+            const Divider(height: 16),
+            Wrap(
+              alignment: WrapAlignment.end,
+              spacing: 4,
+              runSpacing: 4,
+              children: [
+                // Edit button - always visible unless meeting is from lead fallback
+                if (onEdit != null && !meeting.id.startsWith('lead_'))
+                  TextButton.icon(
+                    onPressed: onEdit,
+                    icon: const Icon(Icons.edit, size: 14),
+                    label: const Text('Edit', style: TextStyle(fontSize: 12)),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.blue.shade700,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                  ),
+                if (meeting.status != MeetingStatus.completed &&
+                    meeting.status != MeetingStatus.cancelled) ...[
                   if (meeting.status == MeetingStatus.scheduled) ...[
                     TextButton(
                       onPressed: () => onStatusChange(MeetingStatus.confirmed),
+                      style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
                       child: const Text('Confirm', style: TextStyle(fontSize: 12)),
                     ),
                     TextButton(
                       onPressed: () => onStatusChange(MeetingStatus.cancelled),
+                      style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
                       child: Text('Cancel',
                           style: TextStyle(fontSize: 12, color: Colors.red.shade700)),
                     ),
@@ -1728,22 +1927,25 @@ class _MeetingDetailCard extends StatelessWidget {
                   if (meeting.status == MeetingStatus.confirmed) ...[
                     TextButton(
                       onPressed: () => onStatusChange(MeetingStatus.inProgress),
+                      style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
                       child: const Text('Start', style: TextStyle(fontSize: 12)),
                     ),
                   ],
                   if (meeting.status == MeetingStatus.inProgress) ...[
                     TextButton(
                       onPressed: () => onStatusChange(MeetingStatus.completed),
+                      style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
                       child: const Text('Complete', style: TextStyle(fontSize: 12)),
                     ),
                     TextButton(
                       onPressed: () => onStatusChange(MeetingStatus.noShow),
+                      style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
                       child: const Text('No Show', style: TextStyle(fontSize: 12)),
                     ),
                   ],
                 ],
-              ),
-            ],
+              ],
+            ),
           ],
         ),
       ),

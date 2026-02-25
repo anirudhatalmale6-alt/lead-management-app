@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/lead.dart';
 import '../models/user.dart';
 import '../services/firestore_service.dart';
@@ -12,6 +13,7 @@ class PipelineScreen extends StatefulWidget {
   final void Function() onAddLead;
   final void Function(Lead lead) onEditLead;
   final bool Function(Lead lead)? canEditLead;
+  final AppUser? currentUser;
 
   const PipelineScreen({
     super.key,
@@ -20,6 +22,7 @@ class PipelineScreen extends StatefulWidget {
     required this.onAddLead,
     required this.onEditLead,
     this.canEditLead,
+    this.currentUser,
   });
 
   @override
@@ -48,6 +51,13 @@ class _PipelineScreenState extends State<PipelineScreen> {
   final ScrollController _tableScrollController = ScrollController();
   bool _tableCanScrollLeft = false;
   bool _tableCanScrollRight = true;
+
+  // Scroll controllers for each stage column (vertical scroll in kanban)
+  final Map<LeadStage, ScrollController> _stageScrollControllers = {};
+
+  ScrollController _getStageScrollController(LeadStage stage) {
+    return _stageScrollControllers.putIfAbsent(stage, () => ScrollController());
+  }
 
   // Table view column configuration - All available columns
   static const List<String> _defaultColumns = [
@@ -178,6 +188,9 @@ class _PipelineScreenState extends State<PipelineScreen> {
     _searchController.dispose();
     _kanbanScrollController.dispose();
     _tableScrollController.dispose();
+    for (final c in _stageScrollControllers.values) {
+      c.dispose();
+    }
     super.dispose();
   }
 
@@ -346,17 +359,31 @@ class _PipelineScreenState extends State<PipelineScreen> {
 
   Future<void> _pickFilterDate(bool isFrom) async {
     final now = DateTime.now();
+    final firstDate = isFrom ? DateTime(now.year - 5) : (_filterDateFrom ?? DateTime(now.year - 5));
+    var initialDate = isFrom ? (_filterDateFrom ?? now) : (_filterDateTo ?? now);
+    // Ensure initialDate is not before firstDate
+    if (initialDate.isBefore(firstDate)) initialDate = firstDate;
     final picked = await showDatePicker(
       context: context,
-      initialDate: isFrom ? (_filterDateFrom ?? now) : (_filterDateTo ?? now),
-      firstDate: DateTime(now.year - 5),
+      initialDate: initialDate,
+      firstDate: firstDate,
       lastDate: DateTime(now.year + 5),
     );
     if (picked != null) {
       setState(() {
         if (isFrom) {
           _filterDateFrom = picked;
+          // If end date is before new start date, clear it
+          if (_filterDateTo != null && _filterDateTo!.isBefore(picked)) {
+            _filterDateTo = null;
+          }
         } else {
+          if (_filterDateFrom != null && picked.isBefore(_filterDateFrom!)) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('End date cannot be before start date'), backgroundColor: Colors.orange),
+            );
+            return;
+          }
           _filterDateTo = picked;
         }
       });
@@ -637,6 +664,7 @@ class _PipelineScreenState extends State<PipelineScreen> {
           controller: _kanbanScrollController,
           thumbVisibility: true,
           trackVisibility: true,
+          interactive: true,
           child: SingleChildScrollView(
             controller: _kanbanScrollController,
             scrollDirection: Axis.horizontal,
@@ -647,12 +675,12 @@ class _PipelineScreenState extends State<PipelineScreen> {
             ),
           ),
         ),
-        // Left arrow
+        // Left arrow - leave bottom 20px for scrollbar interaction
         if (_canScrollLeft)
           Positioned(
             left: 0,
             top: 0,
-            bottom: 0,
+            bottom: 20,
             child: GestureDetector(
               onTap: () {
                 _kanbanScrollController.animateTo(
@@ -684,12 +712,12 @@ class _PipelineScreenState extends State<PipelineScreen> {
               ),
             ),
           ),
-        // Right arrow
+        // Right arrow - leave bottom 20px for scrollbar interaction
         if (_canScrollRight)
           Positioned(
             right: 0,
             top: 0,
-            bottom: 0,
+            bottom: 20,
             child: GestureDetector(
               onTap: () {
                 _kanbanScrollController.animateTo(
@@ -721,40 +749,42 @@ class _PipelineScreenState extends State<PipelineScreen> {
               ),
             ),
           ),
-        // Stage indicator at the top
+        // Stage indicator at the top - non-interactive so it doesn't block scrollbar
         Positioned(
           top: 0,
           left: 48,
           right: 48,
-          child: Container(
-            height: 4,
-            decoration: BoxDecoration(
-              color: Colors.grey.shade200,
-              borderRadius: BorderRadius.circular(2),
-            ),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                if (!_kanbanScrollController.hasClients) return const SizedBox();
-                final maxScroll = _kanbanScrollController.position.maxScrollExtent;
-                final currentScroll = _kanbanScrollController.offset;
-                final progress = maxScroll > 0 ? (currentScroll / maxScroll) : 0.0;
-                final indicatorWidth = constraints.maxWidth * 0.2;
-                return Stack(
-                  children: [
-                    Positioned(
-                      left: (constraints.maxWidth - indicatorWidth) * progress,
-                      child: Container(
-                        width: indicatorWidth,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: Colors.blue.shade600,
-                          borderRadius: BorderRadius.circular(2),
+          child: IgnorePointer(
+            child: Container(
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade200,
+                borderRadius: BorderRadius.circular(2),
+              ),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  if (!_kanbanScrollController.hasClients) return const SizedBox();
+                  final maxScroll = _kanbanScrollController.position.maxScrollExtent;
+                  final currentScroll = _kanbanScrollController.offset;
+                  final progress = maxScroll > 0 ? (currentScroll / maxScroll) : 0.0;
+                  final indicatorWidth = constraints.maxWidth * 0.2;
+                  return Stack(
+                    children: [
+                      Positioned(
+                        left: (constraints.maxWidth - indicatorWidth) * progress,
+                        child: Container(
+                          width: indicatorWidth,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: Colors.blue.shade600,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
                         ),
                       ),
-                    ),
-                  ],
-                );
-              },
+                    ],
+                  );
+                },
+              ),
             ),
           ),
         ),
@@ -1446,13 +1476,16 @@ class _PipelineScreenState extends State<PipelineScreen> {
       filteredUsers = filteredUsers.where((u) => u.groupId == _filterGroupId).toList();
     }
 
+    final isMobile = MediaQuery.of(context).size.width < 600;
+    final dropdownWidth = isMobile ? (MediaQuery.of(context).size.width - 56) / 3 : 160.0;
+
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
         children: [
           // Team dropdown
           SizedBox(
-            width: 160,
+            width: dropdownWidth,
             child: DropdownButtonFormField<String>(
               value: _filterTeamId,
               isDense: true,
@@ -1481,7 +1514,7 @@ class _PipelineScreenState extends State<PipelineScreen> {
           const SizedBox(width: 8),
           // Group dropdown
           SizedBox(
-            width: 160,
+            width: dropdownWidth,
             child: DropdownButtonFormField<String>(
               value: _filterGroupId,
               isDense: true,
@@ -1509,7 +1542,7 @@ class _PipelineScreenState extends State<PipelineScreen> {
           const SizedBox(width: 8),
           // User dropdown
           SizedBox(
-            width: 160,
+            width: dropdownWidth,
             child: DropdownButtonFormField<String>(
               value: _filterUserId,
               isDense: true,
@@ -1542,14 +1575,20 @@ class _PipelineScreenState extends State<PipelineScreen> {
     return Container(
       color: Colors.white,
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.4,
+      ),
+      child: SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Divider(height: 1),
           const SizedBox(height: 10),
-          // Row 0: Team > Group > User hierarchy filter
-          _buildHierarchyFilterRow(),
-          const SizedBox(height: 10),
+          // Row 0: Team > Group > User hierarchy filter (hidden for members)
+          if (widget.currentUser?.role != UserRole.member) ...[
+            _buildHierarchyFilterRow(),
+            const SizedBox(height: 10),
+          ],
           // Row 1: Status dropdowns
           Wrap(
             spacing: 10,
@@ -1736,6 +1775,7 @@ class _PipelineScreenState extends State<PipelineScreen> {
           ),
         ],
       ),
+      ),
     );
   }
 
@@ -1908,10 +1948,12 @@ class _PipelineScreenState extends State<PipelineScreen> {
                             ),
                           )
                         : Scrollbar(
+                            controller: _getStageScrollController(stage),
                             thumbVisibility: true,
+                            interactive: true,
                             child: ListView.builder(
-                              shrinkWrap: false, // Allow expansion on mobile
-                              physics: const BouncingScrollPhysics(), // Better mobile feel
+                              controller: _getStageScrollController(stage),
+                              shrinkWrap: false,
                               padding: const EdgeInsets.symmetric(
                                   vertical: 8, horizontal: 8),
                               itemCount: stageLeads.length,
@@ -1935,6 +1977,36 @@ class _PipelineScreenState extends State<PipelineScreen> {
     final healthLabel = lead.health.label;
     final healthColor = AppTheme.healthColor(healthLabel);
 
+    final isMobile = MediaQuery.of(context).size.width < 600;
+
+    final cardContent = GestureDetector(
+      onTap: () => widget.onEditLead(lead),
+      child: _buildCardContent(lead, stageColor, healthColor),
+    );
+
+    // On mobile, use LongPressDraggable to avoid blocking scroll
+    // On desktop, use regular Draggable for immediate drag
+    if (isMobile) {
+      return LongPressDraggable<Lead>(
+        data: lead,
+        delay: const Duration(milliseconds: 400),
+        feedback: Material(
+          elevation: 8,
+          borderRadius: BorderRadius.circular(10),
+          child: SizedBox(
+            width: 260,
+            child: _buildCardContent(lead, stageColor, healthColor,
+                isDragging: true),
+          ),
+        ),
+        childWhenDragging: Opacity(
+          opacity: 0.3,
+          child: _buildCardContent(lead, stageColor, healthColor),
+        ),
+        child: cardContent,
+      );
+    }
+
     return Draggable<Lead>(
       data: lead,
       feedback: Material(
@@ -1950,10 +2022,7 @@ class _PipelineScreenState extends State<PipelineScreen> {
         opacity: 0.3,
         child: _buildCardContent(lead, stageColor, healthColor),
       ),
-      child: GestureDetector(
-        onTap: () => widget.onEditLead(lead),
-        child: _buildCardContent(lead, stageColor, healthColor),
-      ),
+      child: cardContent,
     );
   }
 
@@ -2150,7 +2219,7 @@ class _PipelineScreenState extends State<PipelineScreen> {
                   const SizedBox(width: 4),
                   Expanded(
                     child: Text(
-                      'Follow-up: ${dateFormat.format(lead.nextFollowUpDate!)}',
+                      'Follow-up: ${DateFormat('dd MMM yyyy').format(lead.nextFollowUpDate!)}${lead.nextFollowUpTime.isNotEmpty ? ', ${lead.nextFollowUpTime}' : ''}',
                       style: TextStyle(fontSize: 10, color: Colors.orange.shade600),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -2195,6 +2264,61 @@ class _PipelineScreenState extends State<PipelineScreen> {
                 ],
               ),
             ],
+            // Assigned To member
+            if (lead.assignedTo.isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Row(
+                children: [
+                  Icon(Icons.person_pin, size: 12, color: Colors.deepPurple.shade400),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      'Assigned: ${_resolveUserName(lead.assignedTo)}',
+                      style: TextStyle(fontSize: 10, color: Colors.deepPurple.shade400),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            // Meeting Link button
+            if (lead.meetingLink.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () async {
+                  try {
+                    final url = Uri.parse(lead.meetingLink.startsWith('http') ? lead.meetingLink : 'https://${lead.meetingLink}');
+                    await launchUrl(url, mode: LaunchMode.externalApplication);
+                  } catch (e) {
+                    debugPrint('Could not launch meeting link: $e');
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: Colors.blue.shade200, width: 0.5),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.videocam, size: 14, color: Colors.blue.shade700),
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(
+                          'Join Meeting',
+                          style: TextStyle(fontSize: 11, color: Colors.blue.shade700, fontWeight: FontWeight.w600, decoration: TextDecoration.underline),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
             // Updated By
             if (lead.lastUpdatedBy.isNotEmpty) ...[
               const SizedBox(height: 2),
@@ -2234,6 +2358,14 @@ class _PipelineScreenState extends State<PipelineScreen> {
         ),
       ),
     );
+  }
+
+  String _resolveUserName(String email) {
+    if (email.isEmpty) return '';
+    final user = _users.where((u) => u.email.toLowerCase() == email.toLowerCase()).firstOrNull;
+    if (user != null) return user.name.isNotEmpty ? user.name : email;
+    // Fallback: use email prefix
+    return email.contains('@') ? email.split('@').first : email;
   }
 
   Widget _buildBadge(String label, Color color) {

@@ -32,6 +32,26 @@ void main() async {
     debugPrint('Flutter error: ${details.exception}');
   };
 
+  // Show visible error widget in release mode instead of grey box
+  ErrorWidget.builder = (FlutterErrorDetails details) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      color: Colors.red.shade50,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.error_outline, color: Colors.red, size: 24),
+          const SizedBox(height: 8),
+          Text(
+            'Error: ${details.exception}',
+            style: const TextStyle(color: Colors.red, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  };
+
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
@@ -78,6 +98,11 @@ class _AppRootState extends State<AppRoot> {
   List<Lead> _leads = [];
   bool _isLoadingLeads = true;
   bool _isCheckingAuth = true;
+
+  // GlobalKeys to preserve screen state across rebuilds (e.g., pipeline filters)
+  final _pipelineKey = GlobalKey();
+  final _calendarKey = GlobalKey();
+  final _adminKey = GlobalKey();
 
   @override
   void initState() {
@@ -132,9 +157,23 @@ class _AppRootState extends State<AppRoot> {
       final user = _currentUser!;
       switch (user.role) {
         case UserRole.superAdmin:
-        case UserRole.admin:
-          // Super Admin and Admin have global view — see all leads
+          // Super Admin has global view — see all leads
           leads = await _leadService.getAllLeads();
+          break;
+        case UserRole.admin:
+          // Admin sees their assigned team's leads (not global)
+          if (user.teamId != null && user.teamId!.isNotEmpty) {
+            final teamLeads = await _leadService.getLeadsByTeam(user.teamId!);
+            final userLeads = await _leadService.getLeadsForUser(user.email, ownerUid: user.uid);
+            final seen = <String>{};
+            leads = [];
+            for (final l in [...teamLeads, ...userLeads]) {
+              if (seen.add(l.id)) leads.add(l);
+            }
+          } else {
+            // Admin with no team assigned — fall back to all leads
+            leads = await _leadService.getAllLeads();
+          }
           break;
         case UserRole.manager:
         case UserRole.teamLead:
@@ -181,17 +220,14 @@ class _AppRootState extends State<AppRoot> {
       }
     } catch (e) {
       if (mounted) {
-        // Firestore permission error — use mock data as fallback
-        final mockLeads = generateMockLeads();
         setState(() {
-          _leads = mockLeads;
+          _leads = [];
           _isLoadingLeads = false;
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text(
-                'Using demo data — Firestore rules need to be configured.'),
-            backgroundColor: Colors.orange.shade700,
+            content: Text('Error loading leads: ${e.toString().length > 80 ? e.toString().substring(0, 80) : e}'),
+            backgroundColor: Colors.red.shade700,
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -239,7 +275,13 @@ class _AppRootState extends State<AppRoot> {
               : null,
         ),
       ),
-    );
+    ).then((_) {
+      // Refresh leads when returning from detail screen
+      // This ensures pipeline/dashboard reflect any changes made (e.g., quick follow-up update)
+      if (mounted) {
+        _loadLeads();
+      }
+    });
   }
 
   void _openLeadForm({Lead? lead}) {
@@ -401,26 +443,25 @@ class _AppRootState extends State<AppRoot> {
     final screens = <Widget>[
       DashboardScreen(leads: _leads, currentUser: _currentUser),
       PipelineScreen(
+        key: _pipelineKey,
         leads: _leads,
         onStageChanged: _changeLeadStage,
         onAddLead: () => _openLeadForm(),
         onEditLead: (lead) => _openLeadDetail(lead),
         canEditLead: _canEditLead,
+        currentUser: _currentUser,
       ),
     ];
 
     // Calendar screen (available to all users)
-    screens.add(CalendarScreen(currentUser: _currentUser!));
+    screens.add(CalendarScreen(key: _calendarKey, currentUser: _currentUser!));
 
     // Admin screen visible to ALL roles (with restricted access for non-admins)
-    screens.add(AdminScreen(currentUser: _currentUser!));
+    screens.add(AdminScreen(key: _adminKey, currentUser: _currentUser!));
 
-    // Email & Calendar Settings only visible to Admin and SuperAdmin
+    // Settings only visible to Admin and SuperAdmin
     if (_isAdminOrAbove) {
-      screens.addAll([
-        const EmailSettingsScreen(),
-        CalendarSettingsScreen(currentUser: _currentUser!),
-      ]);
+      screens.add(const EmailSettingsScreen());
     }
 
     return AppShell(
