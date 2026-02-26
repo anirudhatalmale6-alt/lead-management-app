@@ -269,12 +269,17 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
     required DateTime? current,
     required TextEditingController controller,
     required ValueChanged<DateTime> onPicked,
+    DateTime? firstDate,
   }) async {
     final now = DateTime.now();
+    final minDate = firstDate ?? DateTime(now.year - 5);
+    var initialDate = current ?? now;
+    // Ensure initialDate is not before firstDate
+    if (initialDate.isBefore(minDate)) initialDate = minDate;
     final picked = await showDatePicker(
       context: context,
-      initialDate: current ?? now,
-      firstDate: DateTime(now.year - 5),
+      initialDate: initialDate,
+      firstDate: minDate,
       lastDate: DateTime(now.year + 5),
     );
     if (picked != null) {
@@ -704,6 +709,7 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
         label: 'Next Follow-up Date',
         currentDate: _nextFollowUpDate,
         onPicked: (d) => _nextFollowUpDate = d,
+        firstDate: _lastCallDate,
       ),
       _buildTimeField(
         controller: _nextFollowUpTimeController,
@@ -1021,6 +1027,7 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
     required String label,
     required DateTime? currentDate,
     required ValueChanged<DateTime> onPicked,
+    DateTime? firstDate,
   }) {
     return TextFormField(
       controller: controller,
@@ -1034,6 +1041,7 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
         current: currentDate,
         controller: controller,
         onPicked: onPicked,
+        firstDate: firstDate,
       ),
     );
   }

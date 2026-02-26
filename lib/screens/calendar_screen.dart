@@ -1365,6 +1365,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
     List<Meeting> meetings,
     ColorScheme cs,
   ) {
+    final isMobile = MediaQuery.of(context).size.width <= 800;
+
     return InkWell(
       onTap: () {
         setState(() {
@@ -1439,30 +1441,51 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 ],
               ),
             ),
-            // Meeting previews
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 2),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: meetings.take(3).map((meeting) {
-                    return _buildMeetingChip(meeting);
-                  }).toList(),
-                ),
-              ),
-            ),
-            if (meetings.length > 3)
-              Padding(
-                padding: const EdgeInsets.only(left: 4, bottom: 2),
-                child: Text(
-                  '+${meetings.length - 3} more',
-                  style: TextStyle(
-                    fontSize: 9,
-                    color: Colors.grey.shade600,
-                    fontWeight: FontWeight.w500,
+            // Meeting previews (desktop only - mobile shows details in panel below)
+            if (!isMobile) ...[
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: meetings.take(3).map((meeting) {
+                      return _buildMeetingChip(meeting);
+                    }).toList(),
                   ),
                 ),
               ),
+              if (meetings.length > 3)
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, bottom: 2),
+                  child: Text(
+                    '+${meetings.length - 3} more',
+                    style: TextStyle(
+                      fontSize: 9,
+                      color: Colors.grey.shade600,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+            ] else ...[
+              // Mobile: show colored dots only
+              if (meetings.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, top: 2),
+                  child: Wrap(
+                    spacing: 2,
+                    children: meetings.take(4).map((m) {
+                      return Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: _getStatusColor(m.status),
+                          shape: BoxShape.circle,
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+            ],
           ],
         ),
       ),
