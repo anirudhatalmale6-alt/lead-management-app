@@ -85,6 +85,17 @@ class _ScheduleMeetingDialogState extends State<ScheduleMeetingDialog> {
       _selectedLead = widget.lead;
       if (!widget.isEditMode) {
         _onLeadSelected(widget.lead);
+      } else {
+        // In edit mode, ensure the lead's email is in the guest list
+        if (widget.lead!.clientEmail.isNotEmpty) {
+          final alreadyAdded = _guests.any((g) => g.email == widget.lead!.clientEmail);
+          if (!alreadyAdded) {
+            _guests.add(MeetingGuest(
+              email: widget.lead!.clientEmail,
+              name: widget.lead!.clientName,
+            ));
+          }
+        }
       }
     }
 

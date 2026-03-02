@@ -2298,7 +2298,18 @@ class _AdminScreenState extends State<AdminScreen>
                     const SizedBox(height: 12),
                     TextFormField(controller: mobileCtrl, decoration: const InputDecoration(labelText: 'Mobile'), keyboardType: TextInputType.phone),
                     const SizedBox(height: 12),
-                    TextFormField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email'), keyboardType: TextInputType.emailAddress),
+                    TextFormField(
+                      controller: emailCtrl,
+                      decoration: const InputDecoration(labelText: '* Email'),
+                      keyboardType: TextInputType.emailAddress,
+                      validator: (v) {
+                        if (v == null || v.trim().isEmpty) return 'Email is required';
+                        if (!RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$').hasMatch(v.trim())) {
+                          return 'Please enter a valid email address';
+                        }
+                        return null;
+                      },
+                    ),
                     const SizedBox(height: 12),
                     TextFormField(controller: cityCtrl, decoration: const InputDecoration(labelText: 'City')),
                     const SizedBox(height: 12),
@@ -2415,15 +2426,18 @@ class _AdminScreenState extends State<AdminScreen>
                   _showSnackBar('Member added');
                 } else {
                   try {
+                    final email = emailCtrl.text.trim();
                     // Check for duplicate email before creating
-                    final existingUsers = await FirebaseFirestore.instance
-                        .collection('users')
-                        .where('email', isEqualTo: emailCtrl.text.trim())
-                        .get();
-                    if (existingUsers.docs.isNotEmpty) {
-                      setDialogState(() => isLoading = false);
-                      _showSnackBar('This email is already registered. Please use a different email.', isError: true);
-                      return;
+                    if (email.isNotEmpty) {
+                      final existingUsers = await FirebaseFirestore.instance
+                          .collection('users')
+                          .where('email', isEqualTo: email)
+                          .get();
+                      if (existingUsers.docs.isNotEmpty) {
+                        setDialogState(() => isLoading = false);
+                        _showSnackBar('This email is already registered. Please use a different email.', isError: true);
+                        return;
+                      }
                     }
                     final cred = await _authService.signUpWithoutSwitching(emailCtrl.text.trim(), passwordCtrl.text.trim());
                     await FirebaseFirestore.instance.collection('users').doc(cred.user!.uid).set({

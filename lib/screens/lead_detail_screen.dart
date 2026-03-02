@@ -2280,12 +2280,12 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
                             children: [
                               Text(dateStr,
                                   style: TextStyle(
-                                      color: Colors.grey.shade600,
+                                      color: Colors.black87,
                                       fontSize: 12,
                                       fontWeight: FontWeight.w500)),
                               Text(timeStr,
                                   style: TextStyle(
-                                      color: Colors.grey.shade400, fontSize: 11)),
+                                      color: Colors.black54, fontSize: 11)),
                             ],
                           ),
                         ],
@@ -2529,12 +2529,12 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
                             children: [
                               Text(dateStr,
                                   style: TextStyle(
-                                      color: Colors.grey.shade600,
+                                      color: Colors.black87,
                                       fontSize: 12,
                                       fontWeight: FontWeight.w500)),
                               Text('$timeStr - $endTimeStr',
                                   style: TextStyle(
-                                      color: Colors.grey.shade400, fontSize: 11)),
+                                      color: Colors.black54, fontSize: 11)),
                             ],
                           ),
                         ],
@@ -2729,12 +2729,12 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
                             children: [
                               Text(dateStr,
                                   style: TextStyle(
-                                      color: Colors.grey.shade600,
+                                      color: Colors.black87,
                                       fontSize: 12,
                                       fontWeight: FontWeight.w500)),
                               Text(timeStr,
                                   style: TextStyle(
-                                      color: Colors.grey.shade400, fontSize: 11)),
+                                      color: Colors.black54, fontSize: 11)),
                             ],
                           ),
                         ],
