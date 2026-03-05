@@ -638,8 +638,12 @@ class _PipelineScreenState extends State<PipelineScreen> {
               },
             ),
           ),
-          // Filter panel (expandable)
-          if (_showFilters) _buildFilterPanel(),
+          // Filter panel (expandable with animation)
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeInOut,
+            child: _showFilters ? _buildFilterPanel() : const SizedBox.shrink(),
+          ),
           // Pipeline view - Kanban or Table
           Expanded(
             child: _viewType == PipelineViewType.kanban
@@ -1648,83 +1652,84 @@ class _PipelineScreenState extends State<PipelineScreen> {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               // Date From
-              InkWell(
-                onTap: () => _pickFilterDate(true),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey.shade400),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.calendar_today,
-                          size: 16, color: Colors.grey.shade600),
-                      const SizedBox(width: 6),
-                      Text(
-                        _filterDateFrom != null
-                            ? dateFormat.format(_filterDateFrom!)
-                            : 'From Date',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: _filterDateFrom != null
-                              ? Colors.black87
-                              : Colors.grey.shade500,
-                        ),
+              SizedBox(
+                width: 160,
+                child: TextFormField(
+                  readOnly: true,
+                  onTap: () => _pickFilterDate(true),
+                  decoration: InputDecoration(
+                    labelText: 'From Date',
+                    labelStyle: TextStyle(
+                      color: _filterDateFrom != null ? Theme.of(context).colorScheme.primary : null,
+                      fontWeight: _filterDateFrom != null ? FontWeight.w600 : null,
+                    ),
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(
+                        color: _filterDateFrom != null ? Theme.of(context).colorScheme.primary : Colors.grey.shade400,
+                        width: _filterDateFrom != null ? 2.0 : 1.0,
                       ),
-                      if (_filterDateFrom != null) ...[
-                        const SizedBox(width: 4),
-                        GestureDetector(
-                          onTap: () =>
-                              setState(() => _filterDateFrom = null),
-                          child:
-                              Icon(Icons.close, size: 14, color: Colors.grey.shade600),
-                        ),
-                      ],
-                    ],
+                    ),
+                    filled: _filterDateFrom != null,
+                    fillColor: _filterDateFrom != null ? Theme.of(context).colorScheme.primary.withOpacity(0.05) : null,
+                    prefixIcon: Icon(Icons.calendar_today, size: 16, color: _filterDateFrom != null ? Theme.of(context).colorScheme.primary : Colors.grey.shade600),
+                    suffixIcon: _filterDateFrom != null
+                        ? IconButton(
+                            icon: const Icon(Icons.close, size: 16),
+                            onPressed: () => setState(() => _filterDateFrom = null),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          )
+                        : null,
+                    hintText: _filterDateFrom != null ? dateFormat.format(_filterDateFrom!) : null,
                   ),
+                  controller: TextEditingController(
+                    text: _filterDateFrom != null ? dateFormat.format(_filterDateFrom!) : '',
+                  ),
+                  style: const TextStyle(fontSize: 13),
                 ),
               ),
               // Date To
-              InkWell(
-                onTap: () => _pickFilterDate(false),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey.shade400),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.calendar_today,
-                          size: 16, color: Colors.grey.shade600),
-                      const SizedBox(width: 6),
-                      Text(
-                        _filterDateTo != null
-                            ? dateFormat.format(_filterDateTo!)
-                            : 'To Date',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: _filterDateTo != null
-                              ? Colors.black87
-                              : Colors.grey.shade500,
-                        ),
+              SizedBox(
+                width: 160,
+                child: TextFormField(
+                  readOnly: true,
+                  onTap: () => _pickFilterDate(false),
+                  decoration: InputDecoration(
+                    labelText: 'To Date',
+                    labelStyle: TextStyle(
+                      color: _filterDateTo != null ? Theme.of(context).colorScheme.primary : null,
+                      fontWeight: _filterDateTo != null ? FontWeight.w600 : null,
+                    ),
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(
+                        color: _filterDateTo != null ? Theme.of(context).colorScheme.primary : Colors.grey.shade400,
+                        width: _filterDateTo != null ? 2.0 : 1.0,
                       ),
-                      if (_filterDateTo != null) ...[
-                        const SizedBox(width: 4),
-                        GestureDetector(
-                          onTap: () =>
-                              setState(() => _filterDateTo = null),
-                          child:
-                              Icon(Icons.close, size: 14, color: Colors.grey.shade600),
-                        ),
-                      ],
-                    ],
+                    ),
+                    filled: _filterDateTo != null,
+                    fillColor: _filterDateTo != null ? Theme.of(context).colorScheme.primary.withOpacity(0.05) : null,
+                    prefixIcon: Icon(Icons.calendar_today, size: 16, color: _filterDateTo != null ? Theme.of(context).colorScheme.primary : Colors.grey.shade600),
+                    suffixIcon: _filterDateTo != null
+                        ? IconButton(
+                            icon: const Icon(Icons.close, size: 16),
+                            onPressed: () => setState(() => _filterDateTo = null),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          )
+                        : null,
                   ),
+                  controller: TextEditingController(
+                    text: _filterDateTo != null ? dateFormat.format(_filterDateTo!) : '',
+                  ),
+                  style: const TextStyle(fontSize: 13),
                 ),
               ),
               // Follow-up checkbox
@@ -1787,20 +1792,30 @@ class _PipelineScreenState extends State<PipelineScreen> {
     required ValueChanged<T?> onChanged,
     double width = 150,
   }) {
+    final isActive = value != null;
     return SizedBox(
       width: width,
       child: DropdownButtonFormField<T>(
         value: value,
         decoration: InputDecoration(
           labelText: label,
+          labelStyle: TextStyle(
+            color: isActive ? Theme.of(context).colorScheme.primary : null,
+            fontWeight: isActive ? FontWeight.w600 : null,
+          ),
           isDense: true,
           contentPadding:
               const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(color: Colors.grey.shade400),
+            borderSide: BorderSide(
+              color: isActive ? Theme.of(context).colorScheme.primary : Colors.grey.shade400,
+              width: isActive ? 2.0 : 1.0,
+            ),
           ),
+          filled: isActive,
+          fillColor: isActive ? Theme.of(context).colorScheme.primary.withOpacity(0.05) : null,
         ),
         isExpanded: true,
         items: [

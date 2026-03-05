@@ -326,13 +326,13 @@ class EmailService {
             body: body,
             logId: logRef.id,
           );
-          status = smtpSent ? 'sent' : 'pending';
+          status = smtpSent ? 'sent' : 'failed';
           if (!smtpSent) {
-            errorMessage = 'Cloud Function call failed, queued for retry';
+            errorMessage = 'Email sending failed. Please try again.';
           }
         } catch (e) {
-          status = 'pending';
-          errorMessage = 'Cloud Function error: $e';
+          status = 'failed';
+          errorMessage = 'Email sending failed. Please try again.';
           debugPrint('Email Cloud Function error: $e');
         }
       } else {
@@ -349,15 +349,15 @@ class EmailService {
             );
             status = smtpSent ? 'sent' : 'failed';
             if (!smtpSent) {
-              errorMessage = 'SMTP delivery failed';
+              errorMessage = 'Email sending failed. Please try again.';
             }
           } else {
-            status = 'pending';
-            errorMessage = 'SMTP not configured';
+            status = 'failed';
+            errorMessage = 'Email not configured. Please set up SMTP in Settings.';
           }
         } catch (e) {
           status = 'failed';
-          errorMessage = e.toString();
+          errorMessage = 'Email sending failed. Please try again.';
           debugPrint('Email SMTP error: $e');
         }
       }

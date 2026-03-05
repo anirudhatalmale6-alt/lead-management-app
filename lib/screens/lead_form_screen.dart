@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/lead.dart';
+import '../models/meeting.dart';
 import '../models/user.dart';
 import '../data/location_data.dart';
 import '../services/firestore_service.dart';
+import '../services/google_calendar_service.dart';
 
 class LeadFormScreen extends StatefulWidget {
   final Lead? existingLead;
@@ -322,78 +324,144 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
     return _selectedCity ?? '';
   }
 
-  void _handleSave() {
-    if (!_formKey.currentState!.validate()) return;
+  bool _isSaving = false;
 
-    if (_isEditing) {
-      final lead = widget.existingLead!;
-      lead.clientBusinessName = _clientBusinessNameController.text.trim();
-      lead.clientName = _clientNameController.text.trim();
-      lead.clientWhatsApp = _clientWhatsAppController.text.trim();
-      lead.clientMobile = _clientMobileController.text.trim();
-      lead.clientEmail = _clientEmailController.text.trim();
-      lead.country = _getCountryValue();
-      lead.state = _getStateValue();
-      lead.clientCity = _getCityValue();
-      lead.interestedInProduct = _interestedInProduct;
-      lead.rating = _rating;
-      lead.health = _health;
-      lead.stage = _stage;
-      lead.activityState = _activityState;
-      lead.paymentStatus = _paymentStatus;
-      lead.meetingAgenda = _meetingAgenda;
-      lead.meetingDate = _meetingDate;
-      lead.meetingTime = _meetingTimeController.text.trim();
-      lead.meetingLink = _meetingLinkController.text.trim();
-      lead.lastCallDate = _lastCallDate;
-      lead.nextFollowUpDate = _nextFollowUpDate;
-      lead.nextFollowUpTime = _nextFollowUpTimeController.text.trim();
-      lead.comment = _commentController.text.trim();
-      lead.notes = _notesController.text.trim();
-      lead.submitterName = _submitterNameController.text.trim();
-      lead.submitterEmail = _submitterEmailController.text.trim();
-      lead.submitterMobile = _submitterMobileController.text.trim();
-      lead.groupName = _groupNameController.text.trim();
-      lead.subGroup = _subGroupController.text.trim();
-      if (lead.submitterRole.isEmpty && widget.currentUser != null) {
-        lead.submitterRole = widget.currentUser!.role.label;
+  Future<String> _autoGenerateMeetLink() async {
+    // Only generate when meeting date is set and no link provided
+    if (_meetingDate == null) return '';
+    if (_meetingLinkController.text.trim().isNotEmpty) return _meetingLinkController.text.trim();
+
+    try {
+      final gcService = GoogleCalendarService();
+      final gcConfig = await gcService.getConfig();
+      if (gcConfig == null || !gcConfig.isConfigured) return '';
+
+      // Parse meeting time
+      final timeParts = _meetingTimeController.text.trim().split(':');
+      int hour = 10, minute = 0;
+      if (timeParts.length >= 2) {
+        hour = int.tryParse(timeParts[0]) ?? 10;
+        minute = int.tryParse(timeParts[1]) ?? 0;
       }
-      lead.updatedAt = DateTime.now();
-      widget.onSave(lead);
-    } else {
-      final lead = Lead(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        clientName: _clientNameController.text.trim(),
-        clientBusinessName: _clientBusinessNameController.text.trim(),
-        clientWhatsApp: _clientWhatsAppController.text.trim(),
-        clientMobile: _clientMobileController.text.trim(),
-        clientEmail: _clientEmailController.text.trim(),
-        country: _getCountryValue(),
-        state: _getStateValue(),
-        clientCity: _getCityValue(),
-        interestedInProduct: _interestedInProduct,
-        rating: _rating,
-        health: _health,
-        stage: _stage,
-        activityState: _activityState,
-        paymentStatus: _paymentStatus,
-        meetingAgenda: _meetingAgenda,
-        meetingDate: _meetingDate,
-        meetingTime: _meetingTimeController.text.trim(),
-        meetingLink: _meetingLinkController.text.trim(),
-        lastCallDate: _lastCallDate,
-        nextFollowUpDate: _nextFollowUpDate,
-        nextFollowUpTime: _nextFollowUpTimeController.text.trim(),
-        comment: _commentController.text.trim(),
-        notes: _notesController.text.trim(),
-        submitterName: _submitterNameController.text.trim(),
-        submitterEmail: _submitterEmailController.text.trim(),
-        submitterMobile: _submitterMobileController.text.trim(),
-        groupName: _groupNameController.text.trim(),
-        subGroup: _subGroupController.text.trim(),
-        submitterRole: widget.currentUser?.role.label ?? '',
+      final startDateTime = DateTime(
+        _meetingDate!.year, _meetingDate!.month, _meetingDate!.day,
+        hour, minute,
       );
-      widget.onSave(lead);
+
+      final tempMeeting = Meeting(
+        id: '',
+        title: '${_meetingAgenda.label} - ${_clientNameController.text.trim()}',
+        description: 'Auto-generated from lead creation',
+        startTime: startDateTime,
+        endTime: startDateTime.add(const Duration(minutes: 30)),
+        type: MeetingType.googleMeet,
+        status: MeetingStatus.scheduled,
+        guests: [],
+        createdBy: widget.currentUser?.email ?? '',
+        createdAt: DateTime.now(),
+      );
+
+      final result = await gcService.createCalendarEvent(
+        meeting: tempMeeting,
+        config: gcConfig,
+      );
+
+      if (result != null && result['meetLink'] != null) {
+        return result['meetLink'] as String;
+      }
+    } catch (e) {
+      debugPrint('Auto-generate Meet link failed: $e');
+    }
+    return '';
+  }
+
+  Future<void> _handleSave() async {
+    if (!_formKey.currentState!.validate()) return;
+    if (_isSaving) return;
+
+    setState(() => _isSaving = true);
+
+    try {
+      // Auto-generate Google Meet link if meeting date set but no link provided
+      if (_meetingDate != null && _meetingLinkController.text.trim().isEmpty) {
+        final autoLink = await _autoGenerateMeetLink();
+        if (autoLink.isNotEmpty) {
+          _meetingLinkController.text = autoLink;
+        }
+      }
+
+      if (_isEditing) {
+        final lead = widget.existingLead!;
+        lead.clientBusinessName = _clientBusinessNameController.text.trim();
+        lead.clientName = _clientNameController.text.trim();
+        lead.clientWhatsApp = _clientWhatsAppController.text.trim();
+        lead.clientMobile = _clientMobileController.text.trim();
+        lead.clientEmail = _clientEmailController.text.trim();
+        lead.country = _getCountryValue();
+        lead.state = _getStateValue();
+        lead.clientCity = _getCityValue();
+        lead.interestedInProduct = _interestedInProduct;
+        lead.rating = _rating;
+        lead.health = _health;
+        lead.stage = _stage;
+        lead.activityState = _activityState;
+        lead.paymentStatus = _paymentStatus;
+        lead.meetingAgenda = _meetingAgenda;
+        lead.meetingDate = _meetingDate;
+        lead.meetingTime = _meetingTimeController.text.trim();
+        lead.meetingLink = _meetingLinkController.text.trim();
+        lead.lastCallDate = _lastCallDate;
+        lead.nextFollowUpDate = _nextFollowUpDate;
+        lead.nextFollowUpTime = _nextFollowUpTimeController.text.trim();
+        lead.comment = _commentController.text.trim();
+        lead.notes = _notesController.text.trim();
+        lead.submitterName = _submitterNameController.text.trim();
+        lead.submitterEmail = _submitterEmailController.text.trim();
+        lead.submitterMobile = _submitterMobileController.text.trim();
+        lead.groupName = _groupNameController.text.trim();
+        lead.subGroup = _subGroupController.text.trim();
+        if (lead.submitterRole.isEmpty && widget.currentUser != null) {
+          lead.submitterRole = widget.currentUser!.role.label;
+        }
+        lead.updatedAt = DateTime.now();
+        widget.onSave(lead);
+      } else {
+        final lead = Lead(
+          id: DateTime.now().millisecondsSinceEpoch.toString(),
+          clientName: _clientNameController.text.trim(),
+          clientBusinessName: _clientBusinessNameController.text.trim(),
+          clientWhatsApp: _clientWhatsAppController.text.trim(),
+          clientMobile: _clientMobileController.text.trim(),
+          clientEmail: _clientEmailController.text.trim(),
+          country: _getCountryValue(),
+          state: _getStateValue(),
+          clientCity: _getCityValue(),
+          interestedInProduct: _interestedInProduct,
+          rating: _rating,
+          health: _health,
+          stage: _stage,
+          activityState: _activityState,
+          paymentStatus: _paymentStatus,
+          meetingAgenda: _meetingAgenda,
+          meetingDate: _meetingDate,
+          meetingTime: _meetingTimeController.text.trim(),
+          meetingLink: _meetingLinkController.text.trim(),
+          lastCallDate: _lastCallDate,
+          nextFollowUpDate: _nextFollowUpDate,
+          nextFollowUpTime: _nextFollowUpTimeController.text.trim(),
+          comment: _commentController.text.trim(),
+          notes: _notesController.text.trim(),
+          submitterName: _submitterNameController.text.trim(),
+          submitterEmail: _submitterEmailController.text.trim(),
+          submitterMobile: _submitterMobileController.text.trim(),
+          groupName: _groupNameController.text.trim(),
+          subGroup: _subGroupController.text.trim(),
+          submitterRole: widget.currentUser?.role.label ?? '',
+        );
+        widget.onSave(lead);
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
@@ -472,6 +540,15 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
         controller: _clientEmailController,
         label: 'Email',
         keyboardType: TextInputType.emailAddress,
+        validator: (value) {
+          if (value != null && value.trim().isNotEmpty) {
+            final emailRegex = RegExp(r'^[a-zA-Z][a-zA-Z0-9._%+-]*@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$');
+            if (!emailRegex.hasMatch(value.trim())) {
+              return 'Enter a valid email (e.g. name@example.com)';
+            }
+          }
+          return null;
+        },
       ),
       // Country dropdown (searchable)
       Autocomplete<String>(
@@ -882,8 +959,10 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
         ),
         const SizedBox(width: 12),
         FilledButton(
-          onPressed: _handleSave,
-          child: const Text('Save'),
+          onPressed: _isSaving ? null : _handleSave,
+          child: _isSaving
+              ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : const Text('Save'),
         ),
       ],
     );

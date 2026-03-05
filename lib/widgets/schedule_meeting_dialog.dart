@@ -267,7 +267,7 @@ class _ScheduleMeetingDialogState extends State<ScheduleMeetingDialog> {
       String meetLink = _meetingLinkController.text.trim();
       String? googleEventId;
 
-      if (meetLink.isEmpty && !widget.isEditMode) {
+      if (meetLink.isEmpty && _selectedType != MeetingType.phoneCall && _selectedType != MeetingType.inPerson) {
         // Try to create Google Calendar event with Meet link
         try {
           final gcConfig = await _googleCalendarService.getConfig();

@@ -1280,11 +1280,19 @@ class _CalendarScreenState extends State<CalendarScreen> {
         ),
         // Calendar days grid
         Expanded(
-          child: GridView.builder(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // Calculate optimal aspect ratio: fill available height
+              final availableHeight = constraints.maxHeight;
+              final cellWidth = constraints.maxWidth / 7;
+              final cellHeight = availableHeight / 6; // 6 weeks
+              final ratio = cellWidth / cellHeight;
+              return GridView.builder(
+            physics: const NeverScrollableScrollPhysics(),
             padding: EdgeInsets.zero,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 7,
-              childAspectRatio: 1.0,
+              childAspectRatio: ratio > 0 ? ratio : 1.0,
             ),
             itemCount: 42, // 6 weeks
             itemBuilder: (context, index) {
@@ -1337,12 +1345,14 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 cs,
               );
             },
+          );
+          },
           ),
         ),
         // Selected day meetings (on narrow screens)
         if (MediaQuery.of(context).size.width <= 800 && _selectedDate != null)
           Container(
-            height: 200,
+            height: 160,
             decoration: BoxDecoration(
               color: Colors.grey.shade50,
               border: Border(
