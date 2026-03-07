@@ -1,0 +1,32 @@
+<variant
+    name="release"
+    package="io.flutter.plugins.flutter_plugin_android_lifecycle"
+    minSdkVersion="21"
+    targetSdkVersion="21"
+    mergedManifest="/var/lib/freelancer/projects/40181944/lead_management_src/build/flutter_plugin_android_lifecycle/intermediates/merged_manifest/release/processReleaseManifest/AndroidManifest.xml"
+    manifestMergeReport="/var/lib/freelancer/projects/40181944/lead_management_src/build/flutter_plugin_android_lifecycle/outputs/logs/manifest-merger-release-report.txt"
+    proguardFiles="/var/lib/freelancer/projects/40181944/lead_management_src/build/flutter_plugin_android_lifecycle/intermediates/default_proguard_files/global/proguard-android.txt-8.9.1"
+    consumerProguardFiles="proguard.txt"
+    partialResultsDir="/var/lib/freelancer/projects/40181944/lead_management_src/build/flutter_plugin_android_lifecycle/intermediates/lint_vital_partial_results/release/lintVitalAnalyzeRelease/out">
+  <buildFeatures
+      namespacing="REQUIRED"/>
+  <sourceProviders>
+    <sourceProvider
+        manifests="src/main/AndroidManifest.xml"
+        javaDirectories="src/main/java:src/release/java:src/main/kotlin:src/release/kotlin"
+        resDirectories="src/main/res:src/release/res"
+        assetsDirectories="src/main/assets:src/release/assets"/>
+  </sourceProviders>
+  <testSourceProviders>
+  </testSourceProviders>
+  <testFixturesSourceProviders>
+  </testFixturesSourceProviders>
+  <artifact
+      classOutputs="/var/lib/freelancer/projects/40181944/lead_management_src/build/flutter_plugin_android_lifecycle/intermediates/javac/release/compileReleaseJavaWithJavac/classes:/var/lib/freelancer/projects/40181944/lead_management_src/build/flutter_plugin_android_lifecycle/intermediates/compile_r_class_jar/release/generateReleaseRFile/R.jar"
+      type="MAIN"
+      applicationId="io.flutter.plugins.flutter_plugin_android_lifecycle"
+      generatedSourceFolders="/var/lib/freelancer/projects/40181944/lead_management_src/build/flutter_plugin_android_lifecycle/generated/ap_generated_sources/release/out"
+      generatedResourceFolders="/var/lib/freelancer/projects/40181944/lead_management_src/build/flutter_plugin_android_lifecycle/generated/res/resValues/release"
+      desugaredMethodsFiles="/home/freelancer5/.gradle/caches/8.11.1/transforms/870286cdbbc0c60d22a81a93fec5fd8a/transformed/D8BackportedDesugaredMethods.txt">
+  </artifact>
+</variant>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="gcm_defaultSenderId" translatable="false">697606010453</string>
+    <string name="google_api_key" translatable="false">AIzaSyAfK4yFrxY9CH5s_zulOej7LO7o2ncrlJk</string>
+    <string name="google_app_id" translatable="false">1:697606010453:android:72bd5e69c4108f6974c6dc</string>
+    <string name="google_crash_reporting_api_key" translatable="false">AIzaSyAfK4yFrxY9CH5s_zulOej7LO7o2ncrlJk</string>
+    <string name="google_storage_bucket" translatable="false">leadmanagement-8aca6.firebasestorage.app</string>
+    <string name="project_id" translatable="false">leadmanagement-8aca6</string>
+</resources>
