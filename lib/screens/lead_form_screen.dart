@@ -325,6 +325,7 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
   }
 
   bool _isSaving = false;
+  bool _isGeneratingLink = false;
 
   Future<String> _autoGenerateMeetLink() async {
     // Only generate when meeting date is set and no link provided
@@ -755,11 +756,7 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
         controller: _meetingTimeController,
         label: 'Meeting Time',
       ),
-      _buildTextField(
-        controller: _meetingLinkController,
-        label: 'Meeting Link',
-        keyboardType: TextInputType.url,
-      ),
+      _buildMeetingLinkWithButton(),
     ];
 
     return _buildSectionCard(
@@ -768,6 +765,87 @@ class _LeadFormScreenState extends State<LeadFormScreen> {
       isWide: isWide,
       fields: fields,
     );
+  }
+
+  Widget _buildMeetingLinkWithButton() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildTextField(
+          controller: _meetingLinkController,
+          label: 'Meeting Link',
+          keyboardType: TextInputType.url,
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _isGeneratingLink ? null : _onGenerateLinkPressed,
+            icon: _isGeneratingLink
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.video_call, size: 18),
+            label: Text(_isGeneratingLink
+                ? 'Generating...'
+                : 'Generate Google Meet Link'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.teal,
+              side: const BorderSide(color: Colors.teal),
+              padding: const EdgeInsets.symmetric(vertical: 10),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _onGenerateLinkPressed() async {
+    if (_meetingDate == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please set a meeting date first'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isGeneratingLink = true);
+
+    try {
+      // Clear existing link so _autoGenerateMeetLink generates a new one
+      final oldLink = _meetingLinkController.text;
+      _meetingLinkController.clear();
+
+      final link = await _autoGenerateMeetLink();
+      if (link.isNotEmpty) {
+        setState(() => _meetingLinkController.text = link);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Google Meet link generated!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        // Restore old link if generation failed
+        _meetingLinkController.text = oldLink;
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Could not generate link. Check Google Calendar settings.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } finally {
+      if (mounted) setState(() => _isGeneratingLink = false);
+    }
   }
 
   // ---------------------------------------------------------------------------
