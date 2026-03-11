@@ -166,9 +166,10 @@ class _SmtpConfigTabState extends State<_SmtpConfigTab> {
         );
       }
     } catch (e) {
+      debugPrint('SMTP save error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
+          const SnackBar(content: Text('Failed to save SMTP settings. Please check your configuration and try again.')),
         );
       }
     } finally {
@@ -205,9 +206,10 @@ class _SmtpConfigTabState extends State<_SmtpConfigTab> {
         });
       }
     } catch (e) {
+      debugPrint('SMTP test error: $e');
       if (mounted) {
         setState(() {
-          _testResult = 'Error: $e';
+          _testResult = 'Connection test failed. Please verify your SMTP host, port, username and password.';
           _testSuccess = false;
         });
       }
@@ -556,9 +558,10 @@ class _GoogleCalendarTabState extends State<_GoogleCalendarTab> {
         );
       }
     } catch (e) {
+      debugPrint('Google Calendar save error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
+          const SnackBar(content: Text('Failed to save Google Calendar settings. Please try again.')),
         );
       }
     } finally {
@@ -591,9 +594,10 @@ class _GoogleCalendarTabState extends State<_GoogleCalendarTab> {
         });
       }
     } catch (e) {
+      debugPrint('Google Calendar test error: $e');
       if (mounted) {
         setState(() {
-          _testResult = 'Error: $e';
+          _testResult = 'Connection test failed. Please verify your Google Calendar credentials.';
           _testSuccess = false;
         });
       }
@@ -1099,9 +1103,10 @@ class _TemplateEditorSheetState extends State<_TemplateEditorSheet> {
       await widget.emailService.saveTemplate(template);
       if (mounted) Navigator.pop(context);
     } catch (e) {
+      debugPrint('Template save error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
+          const SnackBar(content: Text('Failed to save template. Please try again.')),
         );
       }
     } finally {
@@ -1294,13 +1299,14 @@ class _DemoDataTabState extends State<_DemoDataTab> {
         );
       }
     } catch (e) {
+      debugPrint('Demo leads error: $e');
       if (mounted) {
         setState(() {
-          _status = 'Error: $e';
+          _status = 'Failed to create demo leads. Please try again.';
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error creating leads: $e'),
+          const SnackBar(
+            content: Text('Failed to create demo leads. Please try again.'),
             backgroundColor: Colors.red,
           ),
         );
@@ -1333,13 +1339,14 @@ class _DemoDataTabState extends State<_DemoDataTab> {
         );
       }
     } catch (e) {
+      debugPrint('Template creation error: $e');
       if (mounted) {
         setState(() {
-          _status = 'Error: $e';
+          _status = 'Failed to create templates. Please try again.';
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error creating templates: $e'),
+          const SnackBar(
+            content: Text('Failed to create templates. Please try again.'),
             backgroundColor: Colors.red,
           ),
         );

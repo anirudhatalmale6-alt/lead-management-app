@@ -143,9 +143,10 @@ class _SendEmailDialogState extends State<SendEmailDialog> {
         );
       }
     } catch (e) {
+      debugPrint('Send email error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+          const SnackBar(content: Text('Email sending failed. Please try again.'), backgroundColor: Colors.red),
         );
       }
     } finally {
