@@ -58,6 +58,16 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
   Map<String, String> _teamNames = {}; // id -> name
   Map<String, String> _groupNames = {}; // id -> name
 
+  String _sanitizeErrorMessage(String msg) {
+    final lower = msg.toLowerCase();
+    if (lower.contains('smtp') || lower.contains('socket') || lower.contains('connection') ||
+        lower.contains('cloud function') || lower.contains('timeout') ||
+        lower.contains('exception') || lower.contains('error:')) {
+      return 'Email sending failed. Please try again.';
+    }
+    return msg;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -2391,7 +2401,7 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
                                   Icon(Icons.error_outline, size: 16, color: Colors.red.shade600),
                                   const SizedBox(width: 8),
                                   Expanded(
-                                    child: Text(log.errorMessage!,
+                                    child: Text(_sanitizeErrorMessage(log.errorMessage!),
                                         style: TextStyle(
                                             color: Colors.red.shade700, fontSize: 12)),
                                   ),
@@ -3388,7 +3398,7 @@ class _LeadDetailScreenState extends State<LeadDetailScreen>
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(
-                  log.errorMessage!,
+                  _sanitizeErrorMessage(log.errorMessage!),
                   style: TextStyle(color: Colors.red.shade700, fontSize: 12),
                 ),
               ),

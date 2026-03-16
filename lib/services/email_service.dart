@@ -466,13 +466,13 @@ class EmailService {
           }
           sentCount++;
         } else {
-          await doc.reference.update({'status': 'failed', 'error': 'SMTP delivery failed'});
+          await doc.reference.update({'status': 'failed', 'error': 'Email sending failed. Please try again.'});
           failCount++;
         }
       } catch (e) {
-        await doc.reference.update({'status': 'failed', 'error': e.toString()});
-        failCount++;
         debugPrint('Queue processing error: $e');
+        await doc.reference.update({'status': 'failed', 'error': 'Email sending failed. Please try again.'});
+        failCount++;
       }
     }
 
